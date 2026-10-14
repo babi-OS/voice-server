@@ -1,0 +1,33 @@
+[project]
+name = "troly-voice-server"
+version = "0.1.0"
+description = "Stateless CPU VAD, Vietnamese STT, and Matcha TTS WebSocket service"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "aiohttp>=3.9,<4",
+  "websockets>=15,<18",
+  "huggingface_hub>=0.26",
+  "numpy>=1.26",
+  "onnxruntime>=1.18",
+  "opuslib_next==1.1.5",
+  "regex>=2024.0",
+  "scipy>=1.11",
+  "soundfile>=0.12",
+  "sherpa-onnx==1.12.32",
+  "sherpa-onnx-core==1.12.32",
+  "num2words==0.5.14",
+  "phonemizer>=3.4",
+  "underthesea==9.5.0",
+  "Unidecode>=1.4",
+]
+[project.optional-dependencies]
+dev=["pytest>=8"]
+[project.scripts]
+voice-server="voice_server.__main__:main"
+[tool.uv]
+package=true
+[build-system]
+requires=["setuptools>=68"]
+build-backend="setuptools.build_meta"
+[tool.setuptools.packages.find]
+where=["."]

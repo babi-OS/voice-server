@@ -1,0 +1,18 @@
+services:
+  voice-server:
+    build: .
+    restart: unless-stopped
+    ports: ["8765:8765"]
+    volumes: [voice-models:/models]
+    environment:
+      MATCHA_REPO: ${MATCHA_REPO:-duyleekun/matcha-vi-en}
+      MATCHA_REVISION: ${MATCHA_REVISION:-main}
+      ASR_REPO: ${ASR_REPO:-g-group-ai-lab/gipformer1.5-68M-rnnt}
+      ASR_REVISION: ${ASR_REVISION:-dd9227dcd8705c13f33bdbe59728d546ab94480f}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  voice-models:

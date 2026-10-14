@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Troly voice preview</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, sans-serif; color-scheme: light dark; }
+    body { max-width: 800px; padding: 20px; margin: auto; }
+    h1 { margin-bottom: 0; }
+    .muted { opacity: .72; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
+    button, input, select { font: inherit; padding: 9px 12px; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .5; }
+    #text { flex: 1; min-width: 220px; }
+    #log { min-height: 180px; max-height: 52vh; overflow: auto; border: 1px solid #8888; border-radius: 8px; padding: 12px; }
+    .entry { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .entry b { margin-right: 7px; }
+    details { margin: 16px 0; padding: 12px; border: 1px solid #8888; border-radius: 8px; }
+    details summary { cursor: pointer; font-weight: 600; }
+    details pre { padding: 10px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #8882; }
+    .audio-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; }
+    .audio-options fieldset { border: 1px solid #8888; border-radius: 8px; }
+    .audio-options label { display: block; margin: 8px 0; }
+    .audio-options label select { display: block; box-sizing: border-box; width: 100%; }
+  </style>
+</head>
+<body>
+  <h1>Troly voice preview</h1>
+  <p class="muted">The browser calls the LLM directly. The voice server only transcribes and synthesizes. Use headphones to prevent feedback.</p>
+  <p>Voice: <strong id="voice-status">Connecting…</strong> · LLM: <strong id="llm-status">Checking…</strong></p>
+  <div class="row">
+    <label for="model">Model</label><select id="model" aria-label="LLM model"></select>
+    <button id="connect">Reconnect voice</button><button id="reset">Reset chat</button>
+  </div>
+  <div class="row">
+    <button id="record" disabled>Start microphone</button><button id="stop" disabled>Stop microphone</button>
+    <button id="interrupt">Interrupt reply</button><button id="replay" disabled>Replay last WAV</button>
+    <a id="download" hidden download="last-voice-reply.wav">Download WAV</a>
+  </div>
+  <form id="text-form" class="row">
+    <input id="text" maxlength="1000" placeholder="Or type a message in Vietnamese or English" aria-label="Message">
+    <button id="send" disabled>Send text</button>
+  </form>
+  <div id="log" role="log" aria-live="polite"></div>
+  <audio id="replay-audio" preload="none"></audio>
+  <details id="audio-settings">
+    <summary>Audio compression and format</summary>
+    <p class="muted">Choose each direction independently, then reconnect. Browser Opus uses WebCodecs. PCM16 is uncompressed. The service does not combine separate Opus packets.</p>
+    <div class="audio-options">
+      <fieldset id="input-settings"><legend>Microphone → STT</legend>
+        <label>Codec <select data-setting="codec"><option value="opus">Opus</option><option value="pcm16">PCM16</option></select></label>
+        <label>Sample rate <select data-setting="sample_rate"><option value="8000">8 kHz</option><option value="12000">12 kHz</option><option value="16000" selected>16 kHz</option><option value="24000">24 kHz</option><option value="48000">48 kHz</option></select></label>
+        <label>Packet duration <select data-setting="packet_ms"><option value="20">20 ms</option><option value="40">40 ms</option><option value="60">60 ms</option></select></label>
+        <div data-opus><label>Opus bitrate <select data-setting="bitrate"><option value="12000">12 kbit/s</option><option value="16000">16 kbit/s</option><option value="24000" selected>24 kbit/s</option><option value="32000">32 kbit/s</option><option value="48000">48 kbit/s</option><option value="64000">64 kbit/s</option><option value="96000">96 kbit/s</option></select></label>
+        <label>Application <select data-setting="application"><option value="audio">Audio</option><option value="voip">Voice</option><option value="restricted_lowdelay">Restricted low delay</option></select></label></div>
+      </fieldset>
+      <fieldset id="output-settings"><legend>TTS → speaker</legend>
+        <label>Codec <select data-setting="codec"><option value="opus">Opus</option><option value="pcm16">PCM16</option></select></label>
+        <label>Sample rate <select data-setting="sample_rate"><option value="8000">8 kHz</option><option value="12000">12 kHz</option><option value="16000">16 kHz</option><option value="24000" selected>24 kHz</option><option value="48000">48 kHz</option></select></label>
+        <label>Packet duration <select data-setting="packet_ms"><option value="20">20 ms</option><option value="40">40 ms</option><option value="60">60 ms</option></select></label>
+        <div data-opus><label>Opus bitrate <select data-setting="bitrate"><option value="12000">12 kbit/s</option><option value="16000">16 kbit/s</option><option value="24000" selected>24 kbit/s</option><option value="32000">32 kbit/s</option><option value="48000">48 kbit/s</option><option value="64000">64 kbit/s</option><option value="96000">96 kbit/s</option></select></label>
+        <label>Complexity <select data-setting="complexity"><option value="">Library default</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
+        <label>Application <select data-setting="application"><option value="audio">Audio</option><option value="voip">Voice</option><option value="restricted_lowdelay">Restricted low delay</option></select></label></div>
+      </fieldset>
+    </div>
+    <button id="apply-audio">Apply and reconnect</button> <span id="audio-pending" class="muted"></span>
+  </details>
+  <details id="wire-protocol">
+    <summary>Troly v2 protocol used by this page</summary>
+    <p>One WebSocket carries JSON controls and binary audio. The page sends this exact handshake, then starts independent speech operations:</p>
+    <pre id="wire-hello"></pre><pre id="wire-ready">Waiting for ready…</pre>
+    <p>STT: <code>stt.start</code> → <code>stt.ready</code> → binary packets → <code>stt.finish</code> → <code>stt.final</code> and <code>request.end</code>. TTS: <code>tts.start</code> → <code>tts.ready</code> → numbered <code>tts.text</code> chunks → <code>tts.finish</code> → audio packets and <code>request.end</code>. STT does not call the model. The browser calls <code>https://llm.dlkn.dev/v1/chat/completions</code> itself.</p>
+    <p>Each binary WebSocket message is an 8-byte network-order header (<code>uint32 stream_id</code>, <code>uint32 sequence</code>) followed by one raw Opus or little-endian PCM16 packet. Opus has no Ogg/WebM wrapper. Request and turn IDs are on JSON controls. A cancelled stream’s late packets are discarded.</p>
+    <pre id="wire-examples"></pre>
+  </details>
+  <script>
+    const $ = id => document.getElementById(id);
+    const LLM = "https://llm.dlkn.dev/v1";
+    const VOICE_PATH = "/v2/voice";
+    const HISTORY_KEY = "troly-v2-browser-history";
+    const SYSTEM = "Bạn là trợ lý giọng nói tiếng Việt. Trả lời ngắn gọn, tự nhiên, đúng câu hỏi. Có thể dùng tiếng Anh khi người dùng yêu cầu. Tối đa hai câu. Chỉ xuất văn bản để đọc thành tiếng, không Markdown.";
+    const id = () => crypto.randomUUID();
+    let history = [];
+    try { const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); if (Array.isArray(saved)) history = saved.slice(-24); } catch (_) {}
+    let ws, connected = false, profile, audioContext, mediaStream, micNode, micSource, silentGain;
+    let encoder, decoder, recording = false, encoderDraining = false, inputTimestamp = 0;
+    let stt = null, tts = null, modelAbort = null, modelGeneration = 0;
+    let playAt = 0, playbackGeneration = 0, playbackQueue = Promise.resolve(), sources = new Set();
+    let replaySamples = [], replayUrl = null, lastReply = null;
+
+    function log(label, value) {
+      const row = document.createElement("p"); row.className = "entry";
+      const heading = document.createElement("b"); heading.textContent = label + ":";
+      row.append(heading, document.createTextNode(value)); $("log").append(row);
+      $("log").scrollTop = $("log").scrollHeight; return row;
+    }
+    function send(type, fields = {}) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type, ...fields}));
+    }
+    function direction(rootId) {
+      const root = $(rootId), get = name => root.querySelector(`[data-setting="${name}"]`).value;
+      const codec = get("codec"), sample_rate = Number(get("sample_rate")), packet_ms = Number(get("packet_ms"));
+      const result = {codec, sample_rate, frame_ms: packet_ms, packet_ms};
+      if (codec === "opus") {
+        Object.assign(result, {max_packet_bytes: 1275, bitrate: Number(get("bitrate")), application: get("application")});
+        if (rootId === "output-settings" && get("complexity") !== "") result.complexity = Number(get("complexity"));
+      }
+      return result;
+    }
+    function selectedProfile() { return {input: direction("input-settings"), output: direction("output-settings")}; }
+    function sameSettings(actual, requested) {
+      return ["input", "output"].every(key =>
+        Object.keys(requested[key]).every(name => actual?.[key]?.[name] === requested[key][name]) &&
+        Object.keys(actual?.[key] || {}).length === Object.keys(requested[key]).length);
+    }
+    function encoderConfig() {
+      const input = profile.input;
+      return {codec: "opus", sampleRate: input.sample_rate, numberOfChannels: 1, bitrate: input.bitrate,
+        opus: {format: "opus", frameDuration: input.frame_ms * 1000,
+          application: input.application === "restricted_lowdelay" ? "lowdelay" : input.application}};
+    }
+    async function prepareCodecs() {
+      if (profile.input.codec === "opus") {
+        if (!globalThis.AudioEncoder || !globalThis.AudioData || !(await AudioEncoder.isConfigSupported(encoderConfig())).supported)
+          throw new Error("Browser cannot encode the selected Opus input.");
+      }
+      if (profile.output.codec === "opus") {
+        const config = {codec: "opus", sampleRate: profile.output.sample_rate, numberOfChannels: 1};
+        if (!globalThis.AudioDecoder || !globalThis.EncodedAudioChunk || !(await AudioDecoder.isConfigSupported(config)).supported)
+          throw new Error("Browser cannot decode the selected Opus output.");
+      }
+      configureDecoder();
+    }
+    function configureDecoder() {
+      decoder?.close(); decoder = null;
+      if (profile.output.codec !== "opus") return;
+      const generation = playbackGeneration;
+      decoder = new AudioDecoder({
+        output: data => {
+          playbackQueue = playbackQueue.then(async () => {
+            const samples = new Float32Array(data.numberOfFrames);
+            data.copyTo(samples, {planeIndex: 0, format: "f32-planar"});
+            await playPcm(samples, data.sampleRate, generation);
+          }).catch(error => log("Error", error.message)).finally(() => data.close());
+        },
+        error: error => log("Error", `Opus decoder: ${error.message}`)
+      });
+      decoder.configure({codec: "opus", sampleRate: profile.output.sample_rate, numberOfChannels: 1});
+    }
+    async function audio() {
+      if (!audioContext) audioContext = new AudioContext();
+      await audioContext.resume(); return audioContext;
+    }
+    async function playPcm(samples, sampleRate, generation) {
+      const context = await audio();
+      if (generation !== playbackGeneration) return;
+      replaySamples.push(samples);
+      const buffer = context.createBuffer(1, samples.length, sampleRate);
+      buffer.getChannelData(0).set(samples);
+      const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination);
+      source.onended = () => sources.delete(source);
+      if (playAt < context.currentTime + 0.02) playAt = context.currentTime + 0.2;
+      source.start(playAt); playAt += buffer.duration; sources.add(source);
+    }
+    function stopPlayback() {
+      playbackGeneration++; if (decoder) configureDecoder();
+      for (const source of sources) { try { source.stop(); } catch (_) {} }
+      sources.clear(); playAt = 0; replaySamples = [];
+    }
+    function wavBlob(chunks, rate) {
+      const count = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const buffer = new ArrayBuffer(44 + count * 2), view = new DataView(buffer);
+      const ascii = (at, value) => { for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i)); };
+      ascii(0, "RIFF"); view.setUint32(4, 36 + count * 2, true); ascii(8, "WAVE"); ascii(12, "fmt ");
+      view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+      view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+      view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+      ascii(36, "data"); view.setUint32(40, count * 2, true);
+      let at = 44;
+      for (const chunk of chunks) for (const sample of chunk) {
+        view.setInt16(at, Math.max(-32768, Math.min(32767, Math.round(sample * 32767))), true); at += 2;
+      }
+      return new Blob([buffer], {type: "audio/wav"});
+    }
+    function saveReplay() {
+      if (!replaySamples.length) return;
+      if (replayUrl) URL.revokeObjectURL(replayUrl);
+      replayUrl = URL.createObjectURL(wavBlob(replaySamples, profile.output.sample_rate));
+      $("replay-audio").src = replayUrl; $("download").href = replayUrl;
+      $("replay").disabled = false; $("download").hidden = false;
+    }
+    function interrupt() {
+      modelGeneration++;
+      modelAbort?.abort(); modelAbort = null;
+      if (tts) send("request.cancel", {request_id: tts.id});
+      tts = null; stopPlayback();
+    }
+    async function loadModels() {
+      try {
+        const response = await fetch(`${LLM}/models`, {cache: "no-store"});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const models = (await response.json()).data.filter(item =>
+          item.status?.value === "loaded" && item.architecture?.output_modalities?.includes("text"));
+        if (!models.length) throw new Error("No loaded text model");
+        const previous = $("model").value;
+        $("model").replaceChildren(...models.map(item => new Option(item.id, item.id)));
+        $("model").value = models.some(item => item.id === previous) ? previous :
+          models.some(item => item.id === "qwen3.8-27b-q6k-xl") ? "qwen3.8-27b-q6k-xl" : models[0].id;
+        $("llm-status").textContent = "Ready";
+      } catch (error) {
+        $("llm-status").textContent = "Unavailable"; log("LLM error", `${error.message}. Check ${LLM}/models and browser CORS.`);
+      }
+    }
+    function beginTts() {
+      if (tts || !connected) return;
+      tts = {id: id(), turn: id(), stream: null, sequence: 0, pending: [], nextIndex: 0,
+        waiting: false, finishWanted: false, finished: false};
+      replaySamples = [];
+      send("tts.start", {request_id: tts.id, turn_id: tts.turn});
+    }
+    function pumpTts() {
+      if (!tts?.stream || tts.waiting) return;
+      if (tts.pending.length) {
+        const text = tts.pending.shift();
+        tts.waiting = true;
+        send("tts.text", {request_id: tts.id, index: tts.nextIndex++, text});
+      } else if (tts.finishWanted && !tts.finished) {
+        tts.finished = true; send("tts.finish", {request_id: tts.id});
+      }
+    }
+    function addSentence(text) {
+      if (!text.trim()) return;
+      if (!tts) beginTts();
+      if (!tts) throw new Error("Voice connection is unavailable");
+      for (let start = 0; start < text.length; start += 450) tts.pending.push(text.slice(start, start + 450));
+      pumpTts();
+    }
+    async function askModel(userText) {
+      interrupt();
+      const generation = modelGeneration;
+      $("replay-audio").pause();
+      log("You", userText);
+      const row = log("Assistant", "");
+      const abort = new AbortController(); modelAbort = abort;
+      let complete = "", pending = "", finished = false;
+      try {
+        if (!$("model").value) await loadModels();
+        if (!$("model").value) throw new Error("No loaded text model");
+        $("llm-status").textContent = "Streaming…";
+        for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+        const response = await fetch(`${LLM}/chat/completions`, {
+          method: "POST", headers: {"Content-Type": "application/json"}, signal: abort.signal,
+          body: JSON.stringify({model: $("model").value,
+            messages: [{role: "system", content: SYSTEM}, ...history, {role: "user", content: userText}],
+            stream: true, max_tokens: 128, temperature: 0.3,
+            chat_template_kwargs: {enable_thinking: false, preserve_thinking: false}})
+        });
+        if (!response.ok) throw new Error(`LLM HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
+        const reader = response.body.getReader(), decoder = new TextDecoder();
+        let buffer = "";
+        const processLine = line => {
+          if (!line.startsWith("data: ")) return;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") { finished = true; return; }
+          const event = JSON.parse(payload);
+          if (event.error) throw new Error(event.error.message || "LLM stream failed");
+          for (const choice of event.choices || []) {
+            if (choice.delta?.tool_calls?.length) throw new Error("Browser preview does not advertise device tools");
+            const delta = choice.delta?.content || "";
+            if (!delta) continue;
+            complete += delta; pending += delta;
+            row.append(document.createTextNode(delta));
+            while (true) {
+              const match = /[.!?。！？;；](?:\s+|$)/.exec(pending);
+              if (!match) break;
+              const end = match.index + match[0].length;
+              addSentence(pending.slice(0, end).trim()); pending = pending.slice(end);
+            }
+            if (pending.length > 240) {
+              const split = pending.lastIndexOf(" ", 240);
+              const at = split > 80 ? split : 240;
+              addSentence(pending.slice(0, at).trim()); pending = pending.slice(at).trimStart();
+            }
+          }
+        };
+        while (!finished) {
+          const part = await reader.read();
+          if (generation !== modelGeneration) return;
+          if (part.done) break;
+          buffer += decoder.decode(part.value, {stream: true});
+          let newline;
+          while ((newline = buffer.indexOf("\n")) >= 0) {
+            processLine(buffer.slice(0, newline).replace(/\r$/, "")); buffer = buffer.slice(newline + 1);
+          }
+        }
+        if (!finished) throw new Error("LLM stream ended before [DONE]");
+        break;
+        } catch (error) {
+          const transportError = error instanceof TypeError || /network|fetch|load failed|before \[DONE\]/i.test(error.message);
+          if (attempt === 2 || !transportError || abort.signal.aborted || generation !== modelGeneration) throw error;
+          if (tts) send("request.cancel", {request_id: tts.id});
+          tts = null; stopPlayback(); row.replaceChildren(row.firstChild);
+          complete = pending = ""; finished = false;
+          $("llm-status").textContent = "Retrying…";
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+        }
+        if (pending.trim()) addSentence(pending.trim());
+        if (tts) { tts.finishWanted = true; pumpTts(); }
+        if (!complete.trim()) throw new Error("LLM returned no text");
+        history.push({role: "user", content: userText}, {role: "assistant", content: complete.trim()});
+        history = history.slice(-24); localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+        $("llm-status").textContent = "Ready";
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          $("llm-status").textContent = "Error";
+          log("LLM error", `${error.message}. Check ${LLM} and browser CORS.`);
+        }
+        if (generation === modelGeneration && tts) { send("request.cancel", {request_id: tts.id}); tts = null; stopPlayback(); }
+      } finally {
+        if (generation === modelGeneration) modelAbort = null;
+      }
+    }
+    async function stopMicrophone(notify = true) {
+      if (!recording && !mediaStream) return;
+      recording = false;
+      if (micNode) { micNode.port.onmessage = null; micNode.disconnect(); micNode = null; }
+      micSource?.disconnect(); micSource = null;
+      silentGain?.disconnect(); silentGain = null;
+      mediaStream?.getTracks().forEach(track => track.stop()); mediaStream = null;
+      if (encoder && encoder.state === "configured") {
+        encoderDraining = notify;
+        try { if (notify) await encoder.flush(); }
+        finally { encoderDraining = false; encoder.close(); encoder = null; }
+      }
+      if (notify && stt) send("stt.finish", {request_id: stt.id});
+      $("record").disabled = !connected; $("stop").disabled = true;
+    }
+    async function startMicrophone() {
+      try {
+        if (!connected) throw new Error("Voice session is not ready");
+        interrupt();
+        const context = await audio();
+        mediaStream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}, video: false});
+        await context.audioWorklet.addModule("/mic-worklet.js");
+        const source = context.createMediaStreamSource(mediaStream);
+        const node = new AudioWorkletNode(context, "microphone-processor", {processorOptions: {
+          sampleRate: profile.input.sample_rate, frameMs: profile.input.frame_ms}});
+        const gain = context.createGain(); gain.gain.value = 0;
+        source.connect(node); node.connect(gain); gain.connect(context.destination);
+        micSource = source; micNode = node; silentGain = gain;
+        if (profile.input.codec === "opus") {
+          encoder = new AudioEncoder({
+            output: chunk => {
+              if ((!recording && !encoderDraining) || !stt || ws?.readyState !== WebSocket.OPEN) return;
+              const packet = new Uint8Array(chunk.byteLength); chunk.copyTo(packet);
+              if (packet.byteLength > profile.input.max_packet_bytes) { log("Error", "Opus packet too large"); stopMicrophone(); return; }
+              sendInput(packet);
+            },
+            error: error => log("Error", `Opus encoder: ${error.message}`)
+          });
+          encoder.configure(encoderConfig()); inputTimestamp = 0;
+        }
+        stt = {id: id(), turn: id(), stream: null, sequence: 0};
+        send("stt.start", {request_id: stt.id, turn_id: stt.turn});
+        $("record").disabled = true; $("stop").disabled = false;
+        $("voice-status").textContent = "Listening…";
+        node.port.onmessage = ({data}) => {
+          if (!recording || !stt?.stream) return;
+          if (profile.input.codec === "pcm16") { sendInput(new Uint8Array(data)); return; }
+          if (encoder.encodeQueueSize > 20) { log("Error", "Opus encoder cannot keep up"); stopMicrophone(); return; }
+          const frame = new AudioData({format: "s16", sampleRate: profile.input.sample_rate,
+            numberOfChannels: 1, numberOfFrames: data.byteLength / 2, timestamp: inputTimestamp, data});
+          inputTimestamp += profile.input.frame_ms * 1000;
+          encoder.encode(frame); frame.close();
+        };
+        recording = true;
+      } catch (error) {
+        await stopMicrophone(false); stt = null;
+        log("Error", `Microphone unavailable: ${error.message}`);
+      }
+    }
+    function sendInput(packet) {
+      if (!stt?.stream || ws?.readyState !== WebSocket.OPEN) return;
+      const framed = new Uint8Array(8 + packet.byteLength), view = new DataView(framed.buffer);
+      view.setUint32(0, stt.stream); view.setUint32(4, stt.sequence++); framed.set(packet, 8);
+      ws.send(framed);
+    }
+    function connect() {
+      ws?.close(); stopMicrophone(false); interrupt(); stt = null;
+      connected = false; $("record").disabled = $("send").disabled = true;
+      $("voice-status").textContent = "Connecting…";
+      profile = selectedProfile();
+      const hello = {type: "hello", version: 2, audio: profile};
+      $("wire-hello").textContent = JSON.stringify(hello, null, 2);
+      $("wire-ready").textContent = "Waiting for ready…";
+      $("audio-pending").textContent = "";
+      prepareCodecs().then(() => {
+        const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${VOICE_PATH}`);
+        ws = socket; socket.binaryType = "arraybuffer";
+        socket.onopen = () => socket.send(JSON.stringify(hello));
+        socket.onmessage = ({data}) => {
+          if (socket !== ws) return;
+          if (data instanceof ArrayBuffer) {
+            if (!tts?.stream || data.byteLength < 9) return;
+            const view = new DataView(data), stream = view.getUint32(0), sequence = view.getUint32(4);
+            if (stream !== tts.stream || sequence !== tts.sequence) return;
+            tts.sequence++;
+            const packet = data.slice(8), generation = playbackGeneration;
+            try {
+              if (profile.output.codec === "opus") decoder.decode(new EncodedAudioChunk({type: "key",
+                timestamp: sequence * profile.output.packet_ms * 1000, data: packet}));
+              else {
+                const pcm = Float32Array.from(new Int16Array(packet), sample => sample / 32768);
+                playbackQueue = playbackQueue.then(() => playPcm(pcm, profile.output.sample_rate, generation))
+                  .catch(error => log("Error", error.message));
+              }
+            } catch (error) { log("Error", `Audio playback: ${error.message}`); }
+            return;
+          }
+          const event = JSON.parse(data);
+          switch (event.type) {
+            case "ready":
+              $("wire-ready").textContent = JSON.stringify(event, null, 2);
+              if (!sameSettings(event.audio, profile)) { log("Error", "Server accepted different audio settings"); socket.close(); break; }
+              connected = true;
+              $("voice-status").textContent = "Ready";
+              $("record").disabled = $("send").disabled = false;
+              break;
+            case "stt.ready": if (stt?.id === event.request_id) stt.stream = event.stream_id; break;
+            case "stt.speech_start": $("voice-status").textContent = "Speech detected"; break;
+            case "stt.speech_end": $("voice-status").textContent = "Transcribing…"; stopMicrophone(false); break;
+            case "stt.final":
+              if (stt?.id === event.request_id) {
+                stt = null; stopMicrophone(false);
+                if (event.text) askModel(event.text);
+                else $("voice-status").textContent = "Ready";
+              }
+              break;
+            case "tts.ready": if (tts?.id === event.request_id) { tts.stream = event.stream_id; pumpTts(); } break;
+            case "tts.accepted":
+              if (tts?.id === event.request_id && Number.isInteger(event.index)) { tts.waiting = false; pumpTts(); }
+              break;
+            case "tts.audio_start":
+              if (tts?.id === event.request_id && tts.stream === event.stream_id) $("voice-status").textContent = "Speaking…";
+              break;
+            case "request.end":
+              if (stt?.id === event.request_id) { stt = null; stopMicrophone(false); }
+              if (tts?.id === event.request_id) {
+                if (event.status === "completed") {
+                  const generation = playbackGeneration;
+                  (async () => {
+                    if (decoder?.state === "configured") await decoder.flush();
+                    await playbackQueue;
+                    if (generation === playbackGeneration) saveReplay();
+                  })().catch(error => log("Error", `WAV replay: ${error.message}`));
+                }
+                else log("TTS", `${event.status}: ${event.result?.message || event.result?.code || ""}`);
+                tts = null;
+              }
+              $("voice-status").textContent = connected ? "Ready" : "Disconnected";
+              break;
+            case "error":
+              if (event.code === "late_packet") { stopMicrophone(false); break; }
+              log("Voice error", `${event.code}: ${event.message}`);
+              break;
+          }
+        };
+        socket.onerror = () => log("Voice error", "WebSocket connection failed");
+        socket.onclose = () => {
+          if (socket !== ws) return;
+          connected = false; stopMicrophone(false); interrupt(); stt = null;
+          $("record").disabled = $("stop").disabled = $("send").disabled = true;
+          $("voice-status").textContent = "Disconnected";
+        };
+      }).catch(error => { $("voice-status").textContent = "Unsupported audio"; log("Voice error", error.message); });
+    }
+    $("connect").onclick = connect;
+    $("apply-audio").onclick = connect;
+    $("record").onclick = startMicrophone;
+    $("stop").onclick = () => stopMicrophone();
+    $("interrupt").onclick = () => { interrupt(); $("voice-status").textContent = connected ? "Ready" : "Disconnected"; };
+    $("reset").onclick = () => {
+      interrupt(); history = []; localStorage.removeItem(HISTORY_KEY);
+
+      $("log").replaceChildren(); log("Chat", "History cleared");
+    };
+    $("replay").onclick = async () => {
+      stopPlayback(); const player = $("replay-audio"); player.currentTime = 0;
+      try { await player.play(); } catch (error) { log("Error", `WAV replay failed: ${error.message}`); }
+    };
+    $("text-form").onsubmit = async event => {
+      event.preventDefault(); const text = $("text").value.trim(); if (!text) return;
+      await audio(); await stopMicrophone(); $("text").value = ""; askModel(text);
+    };
+    for (const rootId of ["input-settings", "output-settings"]) {
+      const root = $(rootId);
+      root.addEventListener("change", () => {
+        root.querySelector("[data-opus]").hidden = root.querySelector('[data-setting="codec"]').value !== "opus";
+        $("audio-pending").textContent = "Settings changed. Apply and reconnect to use them.";
+      });
+    }
+    $("wire-examples").textContent = [
+      {type: "stt.start", request_id: "request-1", turn_id: "turn-1"},
+      "<binary: stream_id:uint32, sequence:uint32, raw Opus/PCM16>",
+      {type: "stt.finish", request_id: "request-1"},
+      {type: "tts.start", request_id: "request-2", turn_id: "turn-1"},
+      {type: "tts.text", request_id: "request-2", index: 0, text: "Xin chào."},
+      {type: "tts.finish", request_id: "request-2"}
+    ].map(item => typeof item === "string" ? item : JSON.stringify(item)).join("\n");
+    loadModels(); connect();
+  </script>
+</body>
+</html>
