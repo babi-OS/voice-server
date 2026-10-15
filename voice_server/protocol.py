@@ -13,6 +13,8 @@ INPUT_RATE = 16000
 OUTPUT_RATE = 24000
 MAX_JSON_BYTES = 8192
 MAX_OPUS_BYTES = 1275
+DEFAULT_END_SILENCE_MS = 1000
+MAX_END_SILENCE_MS = 3000
 RATES = frozenset((8000, 12000, 16000, 24000, 48000))
 DURATIONS_MS = frozenset((20, 40, 60))
 APPLICATIONS = frozenset(("voip", "audio", "restricted_lowdelay"))
@@ -76,6 +78,14 @@ def parse_control(message: str) -> dict[str, Any]:
 def _integer(value: Any, label: str) -> int:
     if type(value) is not int:
         raise ProtocolError(f"{label} must be an integer")
+    return value
+
+
+def end_silence_ms(message: dict[str, Any]) -> int:
+    """Zero delegates end-of-utterance detection to the client."""
+    value = _integer(message.get("end_silence_ms", DEFAULT_END_SILENCE_MS), "end_silence_ms")
+    if value != 0 and not 256 <= value <= MAX_END_SILENCE_MS:
+        raise ProtocolError(f"end_silence_ms must be 0 or 256-{MAX_END_SILENCE_MS}")
     return value
 
 

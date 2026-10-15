@@ -11,6 +11,8 @@ from .codec import encode_packet, make_encoder, validate_input_packet
 from .workers import WorkerPool, WorkerBusy
 LOG=logging.getLogger('voice_server')
 MAX_UTTERANCE_BYTES=30*INPUT_RATE*2; MAX_TTS_TEXT=1500; ID_RE=re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+VAD_WINDOW_MS=32
+VAD_WINDOW_BYTES=INPUT_RATE*VAD_WINDOW_MS//1000*2
 
 def ident(v,label):
     if not isinstance(v,str) or not ID_RE.fullmatch(v): raise ProtocolError(f'{label} must be 1-64 ASCII characters')
@@ -39,7 +41,7 @@ class Connection:
         async with self.send_lock: await self.ws.send_bytes(pack_audio(s,q,p))
     async def end(self,r,status,result):
         self.completed[r]={'status':status,'result':result}; await self.send('request.end',request_id=r,status=status,result=result)
-    def clear_stt(self): self.stt=self.stt_stream=None; self.stt_seq=0; self.pending.clear(); self.preroll.clear(); self.utterance.clear(); self.speaking=False; self.voice=self.silence=0
+    def clear_stt(self): self.stt=self.stt_stream=None; self.stt_seq=0; self.pending.clear(); self.preroll.clear(); self.utterance.clear(); self.speaking=False; self.voice=self.silence=0; self.end_silence_windows=math.ceil(DEFAULT_END_SILENCE_MS/VAD_WINDOW_MS)
     def clear_tts(self): self.tts=self.tts_stream=None; self.tts_q=None; self.tts_next=self.tts_len=0; self.tts_finished=False
     async def control(self,text):
         d=parse_control(text); k=d['type']
@@ -50,7 +52,9 @@ class Connection:
         if k=='request.cancel': await self.cancel(ident(d.get('request_id'),'request_id')); return
         if k=='stt.start': await self.start_stt(d); return
         if k=='stt.finish':
-            if d.get('request_id')!=self.stt: raise ProtocolError('STT request is not active','not_active')
+            r=ident(d.get('request_id'),'request_id')
+            if r==self.stt_processing or r in self.completed: return
+            if r!=self.stt: raise ProtocolError('STT request is not active','not_active')
             await self.finish_stt(); return
         if k=='tts.start': await self.start_tts(d); return
         if k=='tts.text': await self.tts_text(d); return
@@ -61,9 +65,13 @@ class Connection:
     async def start_stt(self,d):
         if self.stt or self.stt_task or self.tts: raise ProtocolError('another operation is active','busy')
         r=ident(d.get('request_id'),'request_id'); t=ident(d.get('turn_id'),'turn_id')
+        silence_ms=end_silence_ms(d)
         if r in self.completed: await self.send('request.end',request_id=r,**self.completed[r]); return
-        self.clear_stt(); self.stt=r; self.stt_stream=secrets.randbelow(0xffffffff)+1
-        await self.svc.vad.call('reset',self.key,timeout=3); await self.send('stt.ready',request_id=r,turn_id=t,stream_id=self.stt_stream)
+        self.clear_stt(); self.end_silence_windows=math.ceil(silence_ms/VAD_WINDOW_MS); self.stt=r; self.stt_stream=secrets.randbelow(0xffffffff)+1
+        try: await self.svc.vad.call('reset',self.key,timeout=3)
+        except Exception:
+            self.clear_stt(); raise
+        await self.send('stt.ready',request_id=r,turn_id=t,stream_id=self.stt_stream)
     async def packet(self,raw):
         sid,seq,payload=unpack_audio(raw)
         if sid!=self.stt_stream or not self.stt: raise ProtocolError('audio stream is not active','late_packet')
@@ -72,8 +80,8 @@ class Connection:
         if a.codec=='opus': validate_input_packet(payload,a); pcm=self.decoder.decode(payload,a.sample_rate*a.packet_ms//1000); validate_pcm16(pcm,a.packet_bytes)
         else: validate_pcm16(payload,a.packet_bytes); pcm=payload
         self.stt_seq+=1; self.pending.extend(pcm_resample(pcm,a.sample_rate,INPUT_RATE))
-        while len(self.pending)>=1024 and self.stt:
-            w=bytes(self.pending[:1024]); del self.pending[:1024]; p=await self.svc.vad.call('feed',(self.key,w),timeout=5); await self.vad_window(w,p)
+        while len(self.pending)>=VAD_WINDOW_BYTES and self.stt:
+            w=bytes(self.pending[:VAD_WINDOW_BYTES]); del self.pending[:VAD_WINDOW_BYTES]; p=await self.svc.vad.call('feed',(self.key,w),timeout=5); await self.vad_window(w,p)
     async def vad_window(self,w,p):
         voiced=p>=.5
         if not self.speaking:
@@ -82,11 +90,12 @@ class Connection:
             return
         self.utterance.extend(w); self.silence=0 if voiced else self.silence+1
         if len(self.utterance)>MAX_UTTERANCE_BYTES: r=self.stt; self.clear_stt(); await self.end(r,'failed',{'code':'utterance_too_long'}); return
-        if self.silence>=16: await self.finish_stt()
+        if self.end_silence_windows and self.silence>=self.end_silence_windows: await self.finish_stt()
     async def finish_stt(self):
         r=self.stt
         if not r:return
-        pcm=bytes(self.utterance) if self.speaking else b''; self.clear_stt()
+        pcm=bytes(self.utterance+self.pending) if self.speaking else b''; self.clear_stt()
+        if len(pcm)>MAX_UTTERANCE_BYTES: await self.end(r,'failed',{'code':'utterance_too_long'}); return
         if pcm: await self.send('stt.speech_end',request_id=r)
         if len(pcm)<INPUT_RATE//4*2: await self.send('stt.final',request_id=r,text=''); await self.end(r,'completed',{'transcript':''}); return
         async def run():
@@ -97,7 +106,7 @@ class Connection:
             finally: self.stt_task=None; self.stt_processing=None
         self.stt_processing=r; self.stt_task=asyncio.create_task(run())
     async def start_tts(self,d):
-        if self.tts or self.tts_task or self.stt: raise ProtocolError('another operation is active','busy')
+        if self.tts or self.tts_task or self.stt or self.stt_task: raise ProtocolError('another operation is active','busy')
         r=ident(d.get('request_id'),'request_id'); t=ident(d.get('turn_id'),'turn_id')
         if r in self.completed: await self.send('request.end',request_id=r,**self.completed[r]); return
         self.tts=r; self.tts_stream=secrets.randbelow(0xffffffff)+1; self.tts_q=asyncio.Queue(maxsize=3); self.tts_task=asyncio.create_task(self.run_tts(r,t,self.tts_stream,self.tts_q)); await self.send('tts.ready',request_id=r,turn_id=t,stream_id=self.tts_stream)
@@ -125,14 +134,22 @@ class Connection:
     async def cancel(self,r):
         active=r in (self.stt,self.tts) or self.stt_processing==r
         if self.stt==r:self.clear_stt()
-        if self.stt_task and self.stt_processing==r:self.stt_task.cancel(); self.stt_task=None; self.stt_processing=None
-        if self.tts==r and self.tts_task:self.tts_task.cancel(); self.clear_tts(); active=True
+        tasks=[]
+        if self.stt_task and self.stt_processing==r: tasks.append(self.stt_task)
+        if self.tts==r and self.tts_task: tasks.append(self.tts_task)
+        for task in tasks: task.cancel()
+        if tasks: await asyncio.gather(*tasks,return_exceptions=True)
+        if self.stt_processing==r: self.stt_task=None; self.stt_processing=None
+        if self.tts==r: self.clear_tts(); self.tts_task=None
         if not active and r not in self.completed: raise ProtocolError('request not found','not_found')
         if active: await self.send('request.cancelled',request_id=r); await self.end(r,'cancelled',{'code':'client_cancelled'})
         else: await self.send('request.end',request_id=r,**self.completed[r])
     async def close(self):
-        for task in (self.stt_task,self.tts_task):
-            if task and not task.done(): task.cancel()
+        tasks=[task for task in (self.stt_task,self.tts_task) if task]
+        for task in tasks:
+            if not task.done(): task.cancel()
+        if tasks: await asyncio.gather(*tasks,return_exceptions=True)
+        self.clear_stt(); self.clear_tts(); self.stt_task=self.stt_processing=self.tts_task=None
         try: await self.svc.vad.call('release',self.key,timeout=2)
         except Exception: pass
 async def handle_voice(req):

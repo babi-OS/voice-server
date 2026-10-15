@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-15",
+  "scope": "Host loopback real Silero VAD and Gipformer STT, no production deployment or physical audio.",
+  "fixture_sha256": "baf2f0cb8970eecefb83f69fccb74b904f6679692658424c770cb1f47543a355",
+  "results": [
+    {
+      "codec": "pcm16",
+      "options": {
+        "end_silence_ms": 512
+      },
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ",
+      "post_clip_s": -1.428388826048467,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    },
+    {
+      "codec": "pcm16",
+      "options": {},
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "post_clip_s": 1.0623499870183881,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    },
+    {
+      "codec": "pcm16",
+      "options": {
+        "end_silence_ms": 0
+      },
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "post_clip_s": 0.14736292404122686,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    },
+    {
+      "codec": "opus",
+      "options": {
+        "end_silence_ms": 512
+      },
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ",
+      "post_clip_s": -1.4629389230045486,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    },
+    {
+      "codec": "opus",
+      "options": {},
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "post_clip_s": 1.0740158619941216,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    },
+    {
+      "codec": "opus",
+      "options": {
+        "end_silence_ms": 0
+      },
+      "input_seconds": 4.85,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "post_clip_s": 0.14562076601432672,
+      "events": [
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ]
+    }
+  ]
+}

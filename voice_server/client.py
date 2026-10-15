@@ -17,7 +17,7 @@ async def run(url,wav,text,out):
  p=validate_hello({'type':'hello','version':2,'audio':AUDIO}); ia,oa=p.input,p.output; enc=make_encoder(ia); dec=opuslib_next.Decoder(oa.sample_rate,1); rid=secrets.token_hex(8); turn=secrets.token_hex(8); got=bytearray(); seq=0
  async with connect(url,max_size=10000) as ws:
   await ws.send(encode_control('hello',version=2,audio=p.wire())); assert json.loads(await ws.recv())['type']=='ready'
-  kind='stt' if wav else 'tts'; await ws.send(encode_control(kind+'.start',request_id=rid,turn_id=turn)); started=json.loads(await ws.recv()); sid=started['stream_id']
+  kind='stt' if wav else 'tts'; options={'end_silence_ms':0} if wav else {}; await ws.send(encode_control(kind+'.start',request_id=rid,turn_id=turn,**options)); started=json.loads(await ws.recv()); sid=started['stream_id']
   if wav:
    pcm=read(wav,ia.sample_rate)
    for n,o in enumerate(range(0,len(pcm),ia.packet_bytes)):
