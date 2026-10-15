@@ -1,0 +1,414 @@
+{
+  "date": "2026-10-15",
+  "source": "synthetic Vietnamese weather question",
+  "input_audio_seconds": 4.85,
+  "tts_text": "Sài Gòn hiện tại 29 độ C, có khả năng mưa cao. Bạn nên mang ô khi ra ngoài.",
+  "records": [
+    {
+      "provider": "troly",
+      "kind": "public_health",
+      "http": 200,
+      "response": {
+        "ok": true,
+        "service": "voice-server",
+        "protocol": 2,
+        "stateless": true
+      }
+    },
+    {
+      "provider": "troly",
+      "kind": "cold_setup",
+      "seconds": 2.212327312969137,
+      "capabilities": {
+        "stt": true,
+        "tts": true,
+        "model": false
+      }
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "auto",
+      "round": 1,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "error",
+        "error",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.05282347195316106,
+      "audio_start_s": 0.05309247097466141,
+      "speech_end_s": 5.826874267950188,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 1.072975310008042,
+      "status": "completed",
+      "total_s": 5.976121488958597
+    },
+    {
+      "provider": "troly",
+      "kind": "tts",
+      "mode": "auto",
+      "round": 1,
+      "events": [
+        "tts.ready",
+        "tts.accepted",
+        "tts.accepted",
+        "tts.audio_start",
+        "tts.audio_end",
+        "request.end"
+      ],
+      "admission_s": 0.04927988100098446,
+      "text_sent_s": 0.04934470896841958,
+      "packets": 262,
+      "first_decodable_audio_s": 0.7564712890307419,
+      "status": "completed",
+      "total_s": 1.1242086839629337
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "client",
+      "round": 1,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.04951173299923539,
+      "audio_start_s": 0.04973430500831455,
+      "speech_end_s": 4.9410422870423645,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 0.09749356503598428,
+      "status": "completed",
+      "total_s": 4.997302237024996
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.5-flash-lite",
+      "kind": "stt",
+      "round": 1,
+      "http": 200,
+      "post_clip_s": 6.54070347402012,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ? Có nên mang ô không?",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 168,
+        "cachedContentTokenCount": 0
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash",
+      "kind": "stt",
+      "round": 1,
+      "http": 200,
+      "post_clip_s": 3.153438409033697,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ có nên mang ô không",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 16,
+        "totalTokenCount": 166
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash-tts",
+      "kind": "tts",
+      "round": 1,
+      "audio_bytes": 0,
+      "error": "ReadTimeout",
+      "total_s": 35.01842736196704
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.5-flash-lite",
+      "kind": "stt",
+      "round": 2,
+      "http": 200,
+      "post_clip_s": 7.121204537979793,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ? Có nên mang ô không?",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 168,
+        "cachedContentTokenCount": 0
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash",
+      "kind": "stt",
+      "round": 2,
+      "http": 200,
+      "post_clip_s": 3.396124788967427,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ? Có nên mang ô không?",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 168
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash-tts",
+      "kind": "tts",
+      "round": 2,
+      "audio_bytes": 0,
+      "error": "ReadTimeout",
+      "total_s": 35.00509754096856
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "auto",
+      "round": 2,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "error",
+        "error",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.04759600304532796,
+      "audio_start_s": 0.047759754001162946,
+      "speech_end_s": 5.818903580016922,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 0.9864505130448382,
+      "status": "completed",
+      "total_s": 5.8842643440002576
+    },
+    {
+      "provider": "troly",
+      "kind": "tts",
+      "mode": "auto",
+      "round": 2,
+      "events": [
+        "tts.ready",
+        "tts.accepted",
+        "tts.accepted",
+        "tts.audio_start",
+        "tts.audio_end",
+        "request.end"
+      ],
+      "admission_s": 0.04826672398485243,
+      "text_sent_s": 0.048341857036575675,
+      "packets": 262,
+      "first_decodable_audio_s": 0.548331108991988,
+      "status": "completed",
+      "total_s": 0.6405399460345507
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "client",
+      "round": 2,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.048818170034792274,
+      "audio_start_s": 0.04898972000228241,
+      "speech_end_s": 4.938761154015083,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 0.09344115001149511,
+      "status": "completed",
+      "total_s": 4.992522782005835
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "auto",
+      "round": 3,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "error",
+        "error",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.0508291520527564,
+      "audio_start_s": 0.05095318704843521,
+      "speech_end_s": 5.822594213008415,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 0.980979875987396,
+      "status": "completed",
+      "total_s": 5.8820025190361775
+    },
+    {
+      "provider": "troly",
+      "kind": "tts",
+      "mode": "auto",
+      "round": 3,
+      "events": [
+        "tts.ready",
+        "tts.accepted",
+        "tts.accepted",
+        "tts.audio_start",
+        "tts.audio_end",
+        "request.end"
+      ],
+      "admission_s": 0.0487538930028677,
+      "text_sent_s": 0.04880429001059383,
+      "packets": 262,
+      "first_decodable_audio_s": 0.5457457010052167,
+      "status": "completed",
+      "total_s": 0.6333382010343485
+    },
+    {
+      "provider": "troly",
+      "kind": "stt",
+      "mode": "client",
+      "round": 3,
+      "events": [
+        "stt.ready",
+        "stt.speech_start",
+        "stt.speech_end",
+        "stt.final",
+        "request.end"
+      ],
+      "admission_s": 0.04985224799020216,
+      "audio_start_s": 0.049949191976338625,
+      "speech_end_s": 4.9394154159817845,
+      "transcript": "HÔM NAY Ở SÀI GÒN BAO NHIÊU ĐỘ CÓ NÊN MANG Ô KHÔNG",
+      "final_after_clip_s": 0.08488244101172349,
+      "status": "completed",
+      "total_s": 4.984886816004291
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.5-flash-lite",
+      "kind": "stt",
+      "round": 3,
+      "http": 200,
+      "post_clip_s": 6.557972394977696,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ? Có nên mang ô không?",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 168,
+        "cachedContentTokenCount": 0
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash",
+      "kind": "stt",
+      "round": 3,
+      "http": 200,
+      "post_clip_s": 4.055971338995732,
+      "transcript": "Hôm nay ở Sài Gòn bao nhiêu độ? Có nên mang ô không?",
+      "usage": {
+        "promptTokenCount": 150,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 168
+      }
+    },
+    {
+      "provider": "key4u",
+      "model": "gemini-3.8-flash-tts",
+      "kind": "tts",
+      "round": 3,
+      "audio_bytes": 0,
+      "error": "ReadTimeout",
+      "total_s": 35.01346111303428
+    }
+  ],
+  "deployment": {
+    "host": "5090",
+    "namespace": "voice",
+    "deployment": "voice",
+    "application_commit": "f8609cc",
+    "image": "localhost/voice-server:sha-f8609cc",
+    "image_id": "sha256:32e93b6c6349aee683cbec725ef18183cde175640d678b1fd9d424ffa7e5b70c",
+    "server_sha256": "6211714ba2d3d49e3a848529af081caa95fd7c255d7f5671bd081f85195af32f",
+    "ready": true,
+    "restarts": 0,
+    "previous_image": "localhost/voice-server:sha-c61b8c365c70",
+    "service_and_model_pvc_preserved": true
+  },
+  "summary": {
+    "troly_stt_auto": {
+      "n": 3,
+      "median_s": 0.9864505130448382,
+      "min_s": 0.980979875987396,
+      "max_s": 1.072975310008042,
+      "samples_s": [
+        1.072975310008042,
+        0.9864505130448382,
+        0.980979875987396
+      ]
+    },
+    "troly_stt_client": {
+      "n": 3,
+      "median_s": 0.09344115001149511,
+      "min_s": 0.08488244101172349,
+      "max_s": 0.09749356503598428,
+      "samples_s": [
+        0.09749356503598428,
+        0.09344115001149511,
+        0.08488244101172349
+      ]
+    },
+    "troly_tts": {
+      "n": 3,
+      "median_s": 0.548331108991988,
+      "min_s": 0.5457457010052167,
+      "max_s": 0.7564712890307419,
+      "samples_s": [
+        0.7564712890307419,
+        0.548331108991988,
+        0.5457457010052167
+      ]
+    },
+    "gemini_lite_stt": {
+      "n": 3,
+      "median_s": 6.557972394977696,
+      "min_s": 6.54070347402012,
+      "max_s": 7.121204537979793,
+      "samples_s": [
+        6.54070347402012,
+        7.121204537979793,
+        6.557972394977696
+      ]
+    },
+    "gemini_flash_stt": {
+      "n": 3,
+      "median_s": 3.396124788967427,
+      "min_s": 3.153438409033697,
+      "max_s": 4.055971338995732,
+      "samples_s": [
+        3.153438409033697,
+        3.396124788967427,
+        4.055971338995732
+      ]
+    },
+    "gemini_tts": {
+      "requests": 3,
+      "successes": 0,
+      "timeouts_s": [
+        35.01842736196704,
+        35.00509754096856,
+        35.01346111303428
+      ]
+    }
+  },
+  "initial_setup_failure": {
+    "stage": "public HTTPS health before speech tests",
+    "error": "TLSV1_ALERT_INTERNAL_ERROR",
+    "recovery": "Subsequent verified TLS health and WSS negotiation succeeded; no TLS verification bypass."
+  },
+  "scope": "Host probes against deployed public endpoint; no LLM answer/tool loop, no physical microphone/speaker acceptance."
+}

@@ -47,3 +47,6 @@ HF_HOME="$PWD/.local/huggingface" uv run python tests/check_endpointing_models.p
 
 The real-model check downloads public model files on first use and writes its
 results to `.local/real-model-results.json`.
+
+The fix was subsequently deployed to 5090 and verified through the public endpoint.
+See [deployment and latency results](DEPLOYMENT_20261015.md).
