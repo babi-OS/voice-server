@@ -4,12 +4,41 @@ Stateless CPU speech service for Vietnamese-first assistants. It provides VAD, G
 
 ## Run with Docker
 
+Use the public AMD64 release image, keeping downloaded models in a named volume:
+
+```sh
+docker run -d --name voice-server --restart unless-stopped \
+  -p 8765:8765 -v voice-models:/models \
+  ghcr.io/babi-os/voice-server:0.0.1
+docker logs -f voice-server
+curl http://127.0.0.1:8765/healthz
+```
+
+The service becomes ready after the first model download and warmup. The image
+runs as UID/GID 10001; bind-mounted model directories must be writable by that
+user. Models are downloaded at runtime, not included in the image.
+
+To build from source instead:
+
 ```sh
 docker compose up --build
 curl http://127.0.0.1:8765/healthz
 ```
 
 The first start downloads the pinned public Hugging Face models into the `voice-models` named volume. Override revisions in `.env` when deliberately upgrading them.
+
+## Container releases
+
+Pushing a `vMAJOR.MINOR.PATCH` tag runs the host tests and publishes
+`ghcr.io/babi-os/voice-server:MAJOR.MINOR.PATCH`, `:latest`, and
+`:sha-<full-commit>`. Pull requests run the same tests and build without
+publishing. Actions are pinned to commits and GHCR authentication uses the
+workflow's `GITHUB_TOKEN`. OCI labels record the source, version and revision.
+Container versions are independent of the Python package version.
+
+For reproducible deployments, pin the published image digest instead of
+`:latest`. New packages must be made public in GitHub package settings before
+unauthenticated pulls work.
 
 ## Protocol
 
