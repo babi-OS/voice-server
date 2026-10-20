@@ -134,6 +134,9 @@ int8 ONNX graphs and tokens, excluding training and unused float32 files.
 
 `GET /metrics` exposes aggregate Prometheus gauges for connected clients and
 admitted/running/queued VAD, ASR and TTS work, plus admission-rejection counters.
+`voice_active_connections` counts ongoing speech operations and connections with
+voice traffic within 30 seconds, so idle open browser tabs need not keep model
+replicas scaled up indefinitely.
 It contains no audio, transcripts, request IDs or persistent user state. Scrape it
 through an internal Service; public gateways can restrict routes to the browser,
 health check and voice WebSocket. CPU/memory measurements should include the

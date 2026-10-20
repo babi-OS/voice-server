@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 import aiohttp
@@ -29,6 +30,15 @@ def test_metrics_and_readiness_during_drain():
             response = await client.get('/metrics')
             text = await response.text()
             assert 'voice_connections 1\n' in text
+            assert 'voice_active_connections 0\n' in text
+            connection = next(iter(svc.connections))
+            connection.last_activity = time.monotonic()
+            assert 'voice_active_connections 1\n' in await (await client.get('/metrics')).text()
+            connection.last_activity -= 31
+            assert 'voice_active_connections 0\n' in await (await client.get('/metrics')).text()
+            connection.tts = 'active-speech'
+            assert 'voice_active_connections 1\n' in await (await client.get('/metrics')).text()
+            connection.tts = None
             assert 'voice_worker_queued{kind="tts"} 0\n' in text
             svc.draining = True
             assert (await client.get('/readyz')).status == 503

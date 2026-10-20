@@ -35,6 +35,7 @@ class Service:
 class Connection:
     def __init__(self,ws,svc):
         self.ws=ws; self.svc=svc; self.audio=None; self.decoder=None; self.encoder=None; self.send_lock=asyncio.Lock(); self.key=secrets.token_hex(8)
+        self.last_activity=None
         self.stt=None; self.stt_stream=None; self.stt_seq=0; self.stt_task=None; self.stt_processing=None; self.pending=bytearray(); self.preroll=deque(maxlen=16); self.utterance=bytearray(); self.speaking=False; self.voice=0; self.silence=0
         self.tts=None; self.tts_stream=None; self.tts_task=None; self.tts_q=None; self.tts_next=0; self.tts_len=0; self.tts_finished=False; self.completed={}
     async def send(self,k,**f):
@@ -47,6 +48,7 @@ class Connection:
     def clear_tts(self): self.tts=self.tts_stream=None; self.tts_q=None; self.tts_next=self.tts_len=0; self.tts_finished=False
     async def control(self,text):
         d=parse_control(text); k=d['type']
+        if k!='hello': self.last_activity=time.monotonic()
         if self.audio is None:
             if k!='hello': raise ProtocolError('hello required first')
             self.audio=validate_hello(d); self.decoder=opuslib_next.Decoder(self.audio.input.sample_rate,1) if self.audio.input.codec=='opus' else None; self.encoder=make_encoder(self.audio.output) if self.audio.output.codec=='opus' else None
@@ -77,6 +79,7 @@ class Connection:
             self.clear_stt(); raise
         await self.send('stt.ready',request_id=r,turn_id=t,stream_id=self.stt_stream)
     async def packet(self,raw):
+        self.last_activity=time.monotonic()
         sid,seq,payload=unpack_audio(raw)
         if sid!=self.stt_stream or not self.stt: raise ProtocolError('audio stream is not active','late_packet')
         if seq!=self.stt_seq: raise ProtocolError('audio sequence mismatch','sequence_mismatch')
@@ -180,7 +183,11 @@ async def ready(req):
     return web.json_response({'ok':not req.app['service'].draining},status=503 if req.app['service'].draining else 200)
 async def metrics(req):
     svc=req.app['service']
+    now=time.monotonic()
+    active=sum(bool(c.stt or c.stt_task or c.tts or c.tts_task or
+                    (c.last_activity is not None and now-c.last_activity<30)) for c in svc.connections)
     lines=['# TYPE voice_connections gauge',f'voice_connections {sum(c.audio is not None for c in svc.connections)}',
+           '# TYPE voice_active_connections gauge',f'voice_active_connections {active}',
            '# TYPE voice_draining gauge',f'voice_draining {int(svc.draining)}',
            '# TYPE voice_worker_admitted gauge','# TYPE voice_worker_running gauge',
            '# TYPE voice_worker_queued gauge','# TYPE voice_worker_rejected_total counter']
