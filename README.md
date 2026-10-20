@@ -87,3 +87,39 @@ fixture through a temporary loopback WebSocket server. It exercises PCM16 and
 Opus, reproduces the old cutoff with an explicit 512 ms threshold, and checks
 the default and client-controlled modes retain both clauses. No physical
 microphone/speaker or production service is used. Results go to `.local/`.
+
+## CPU workers and threads
+
+The service uses separate bounded VAD, STT and TTS pools. STT/TTS can run in
+multiple model processes; the next idle process takes the next queued call.
+VAD stays in one process so each connection's recurrent state stays together.
+Every STT/TTS process loads its model and executes a small inference before the
+service becomes ready. Model weights are shared on disk, while runtime model
+allocations are per process.
+
+These settings are read at startup:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `VOICE_ASR_WORKERS` | 1 | STT model processes, maximum 8 |
+| `VOICE_TTS_WORKERS` | 1 | TTS model processes, maximum 4 |
+| `VOICE_ASR_THREADS` | 2 | sherpa inference threads per STT process |
+| `VOICE_TTS_THREADS` | 2 | ONNX intra-op threads per Matcha session |
+| `VOICE_ORT_SPINNING` | 1 | VAD/Matcha ONNX thread spinning: 0 disables, 1 enables |
+
+STT still admits at most 8 outstanding calls and TTS at most 4, including
+running calls. Increasing workers does not increase those admission limits.
+Cancellation of native inference retains its worker and admission slot until
+the native call finishes; queued work cancelled before execution frees its
+slot immediately. The native work itself is not interrupted.
+
+Choose worker/thread combinations against the container CPU quota, then measure
+latency and memory under concurrent speech. More workers duplicate model RAM;
+more inference threads can compete for the same CPU quota. Kubernetes CPU and
+memory requests/limits are set by the deployment, independently of these flags.
+The container's `OMP_NUM_THREADS` and `OPENBLAS_NUM_THREADS` settings also apply
+to native libraries. Changing these settings requires restarting the service.
+
+The default process/thread counts preserve the previous one-process layout.
+The protocol, pinned model selection, 20ms packet contract, and connection-local
+state model are unchanged. These options do not add batching or an autoscaler.

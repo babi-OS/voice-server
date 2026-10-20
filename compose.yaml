@@ -9,6 +9,11 @@ services:
       MATCHA_REVISION: ${MATCHA_REVISION:-main}
       ASR_REPO: ${ASR_REPO:-g-group-ai-lab/gipformer1.5-68M-rnnt}
       ASR_REVISION: ${ASR_REVISION:-dd9227dcd8705c13f33bdbe59728d546ab94480f}
+      VOICE_ASR_WORKERS: ${VOICE_ASR_WORKERS:-1}
+      VOICE_TTS_WORKERS: ${VOICE_TTS_WORKERS:-1}
+      VOICE_ASR_THREADS: ${VOICE_ASR_THREADS:-2}
+      VOICE_TTS_THREADS: ${VOICE_TTS_THREADS:-2}
+      VOICE_ORT_SPINNING: ${VOICE_ORT_SPINNING:-1}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz')"]
       interval: 30s

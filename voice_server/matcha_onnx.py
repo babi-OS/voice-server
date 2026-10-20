@@ -28,6 +28,7 @@ class ModelSpec:
     mode: str = "selected"
 from voice_server.errors import MissingDependency
 from voice_server.base import Clock, SynthChunk, SynthOutput, TtsAdapter
+from voice_server.runtime import integer_setting, session_options
 
 
 class MatchaOnnx(TtsAdapter):
@@ -71,9 +72,7 @@ class MatchaOnnx(TtsAdapter):
                 self.spec.repo, self.spec.revision,
                 allow_patterns=["int8/*.onnx", "symbols.json"],
             )
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 2
-        opts.inter_op_num_threads = 1
+        opts = session_options(integer_setting("VOICE_TTS_THREADS", 2))
         if self.spec.mode == "selected":
             metadata = json.loads((self.root / "model.json").read_text())
             if metadata.get("frontend") != "vi_grapheme_original_v1" or metadata.get("vocoder_backend") != "onnx-spectrum-scipy-istft":
