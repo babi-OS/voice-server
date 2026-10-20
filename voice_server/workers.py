@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio, concurrent.futures, multiprocessing, os
 from pathlib import Path
 from typing import Any
+from .runtime import integer_setting, session_options
 _KIND = ''; _MODEL = None; _VAD_STATES = {}
 MATCHA_REPO = os.getenv('MATCHA_REPO','duyleekun/matcha-vi-en')
 MATCHA_REVISION = os.getenv('MATCHA_REVISION','main')
@@ -26,17 +27,21 @@ def _initialize(kind):
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
         p=hf_hub_download('onnx-community/silero-vad','onnx/model.onnx',cache_dir=os.getenv('HF_HOME','/models/huggingface'))
-        o=ort.SessionOptions(); o.intra_op_num_threads=1; o.inter_op_num_threads=1
+        o=session_options(1)
         _MODEL=ort.InferenceSession(str(p),o,providers=['CPUExecutionProvider'])
     elif kind=='asr':
         from huggingface_hub import snapshot_download
         import sherpa_onnx
         root=Path(snapshot_download(ASR_REPO,revision=ASR_REVISION))
         enc=_find(root,'encoder'); dec=_find(root,'decoder'); join=_find(root,'joiner'); tok=_tokens(root)
-        _MODEL=sherpa_onnx.OfflineRecognizer.from_transducer(encoder=str(enc),decoder=str(dec),joiner=str(join),tokens=str(tok),num_threads=2,sample_rate=16000,feature_dim=80,decoding_method='greedy_search')
+        _MODEL=sherpa_onnx.OfflineRecognizer.from_transducer(encoder=str(enc),decoder=str(dec),joiner=str(join),tokens=str(tok),num_threads=integer_setting('VOICE_ASR_THREADS',2),sample_rate=16000,feature_dim=80,decoding_method='greedy_search')
+        # Initialize native decode allocations before advertising readiness.
+        _work('decode',bytes(16000*2))
     elif kind=='tts':
         from voice_server.matcha_onnx import MatchaOnnx, ModelSpec
         _MODEL=MatchaOnnx(ModelSpec(MATCHA_REPO,MATCHA_REVISION,'selected')); _MODEL.load()
+        # Every model process must execute inference, not just load its graphs.
+        _work('synthesize','Xin chào.')
     else: raise ValueError(kind)
 def _work(command,payload):
     if command=='ping': return _KIND
@@ -60,15 +65,37 @@ def _work(command,payload):
     raise ValueError(command)
 class WorkerPool:
     def __init__(self,kind,pending):
-        self.kind=kind; self.pending=asyncio.Semaphore(pending); self.executor=self._new()
+        # VAD carries connection-local recurrent state: keep it in one process.
+        # ASR/TTS calls are independent and can use separately warmed processes.
+        workers=integer_setting('VOICE_'+kind.upper()+'_WORKERS',1) if kind in ('asr','tts') else 1
+        if workers>pending: raise ValueError(f'{kind} workers cannot exceed its admission limit {pending}')
+        self.kind=kind; self.pending=asyncio.Semaphore(pending)
+        self.executors=[self._new() for _ in range(workers)]
+        self.available=asyncio.Queue()
+        for slot in range(workers): self.available.put_nowait(slot)
     def _new(self): return concurrent.futures.ProcessPoolExecutor(max_workers=1,mp_context=multiprocessing.get_context('spawn'),initializer=_initialize,initargs=(self.kind,))
     async def call(self,command,payload=None,timeout=30):
         try: await asyncio.wait_for(self.pending.acquire(),.05)
         except TimeoutError as e: raise WorkerBusy(f'{self.kind} queue is full') from e
-        try: fut=asyncio.get_running_loop().run_in_executor(self.executor,_work,command,payload)
-        except Exception: self.pending.release(); raise
-        fut.add_done_callback(lambda _: self.pending.release())
-        return await asyncio.wait_for(asyncio.shield(fut),timeout)
+        slot=fut=None
+        try:
+            async with asyncio.timeout(timeout):
+                # Wait centrally instead of pre-queueing behind a busy process.
+                # The next idle model gets the next request, even for varied lengths.
+                slot=await self.available.get()
+                fut=asyncio.get_running_loop().run_in_executor(self.executors[slot],_work,command,payload)
+                def done(_):
+                    self.available.put_nowait(slot); self.pending.release()
+                # Cancellation/timeout must not free capacity while native inference is running.
+                fut.add_done_callback(done)
+                return await asyncio.shield(fut)
+        finally:
+            if fut is None:
+                if slot is not None: self.available.put_nowait(slot)
+                self.pending.release()
     async def warm(self):
-        if await self.call('ping',timeout=180)!=self.kind: raise RuntimeError('worker mismatch')
-    def close(self): self.executor.shutdown(wait=False,cancel_futures=True)
+        loop=asyncio.get_running_loop()
+        results=await asyncio.wait_for(asyncio.gather(*(loop.run_in_executor(e,_work,'ping',None) for e in self.executors)),180)
+        if any(result!=self.kind for result in results): raise RuntimeError('worker mismatch')
+    def close(self):
+        for executor in self.executors: executor.shutdown(wait=False,cancel_futures=True)
