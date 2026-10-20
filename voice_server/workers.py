@@ -20,9 +20,9 @@ def _tokens(root):
     hits=list(root.rglob('tokens.txt'))
     if not hits: raise FileNotFoundError(f'tokens.txt not found in {root}')
     return hits[0]
-def _asr_snapshot():
+def _asr_snapshot(**download_options):
     from huggingface_hub import snapshot_download
-    options=dict(repo_id=ASR_REPO,revision=ASR_REVISION)
+    options=dict(repo_id=ASR_REPO,revision=ASR_REVISION,**download_options)
     # The selected recognizer loads int8 graphs. Avoid downloading unused
     # training checkpoints and float32 copies on every new replica.
     if ASR_REPO=='g-group-ai-lab/gipformer1.5-68M-rnnt' and ASR_REVISION=='dd9227dcd8705c13f33bdbe59728d546ab94480f':
