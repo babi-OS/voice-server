@@ -123,7 +123,8 @@ to native libraries. Changing these settings requires restarting the service.
 The default process/thread counts preserve the previous one-process layout.
 The protocol, pinned model selection, 20ms packet contract, and connection-local
 state model are unchanged. These options do not add batching or an autoscaler.
-# Capacity metrics and shutdown
+
+## Capacity metrics and shutdown
 
 `GET /metrics` exposes aggregate Prometheus gauges for connected clients and
 admitted/running/queued VAD, ASR and TTS work, plus admission-rejection counters.
@@ -140,4 +141,3 @@ period of at least 150 seconds. Model processes remain available until draining
 finishes. Existing WebSockets stay on their original replica when scaling up;
 new replicas receive new connections. Benchmark that routing behavior separately
 from raw model throughput when choosing autoscaling thresholds.
-
