@@ -23,6 +23,7 @@ def test_metrics_and_readiness_during_drain():
         svc = SimpleNamespace(vad=pool(), asr=pool(), tts=pool())
         async with TestClient(TestServer(create_app(svc))) as client:
             ws = await client.ws_connect('/v2/voice')
+            assert ws._response.headers['X-Voice-Replica']
             await ws.send_json({'type': 'hello', 'version': 2, 'audio': PROFILE})
             assert (await ws.receive_json())['type'] == 'ready'
             response = await client.get('/metrics')

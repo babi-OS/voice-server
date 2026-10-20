@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, logging, math, re, secrets, signal, time
+import asyncio, json, logging, math, os, re, secrets, signal, time
 from collections import deque
 from pathlib import Path
 import numpy as np
@@ -159,7 +159,9 @@ class Connection:
 async def handle_voice(req):
     if req.app['service'].draining:
         raise web.HTTPServiceUnavailable(text='voice replica is draining',headers={'Retry-After':'1'})
-    ws=web.WebSocketResponse(max_msg_size=8192+8); await ws.prepare(req); c=Connection(ws,req.app['service'])
+    ws=web.WebSocketResponse(max_msg_size=8192+8)
+    ws.headers['X-Voice-Replica']=os.getenv('HOSTNAME','voice-server')
+    await ws.prepare(req); c=Connection(ws,req.app['service'])
     c.svc.connections.add(c)
     try:
         async for msg in ws:
