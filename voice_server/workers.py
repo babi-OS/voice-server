@@ -25,14 +25,11 @@ def _asr_snapshot():
     options=dict(repo_id=ASR_REPO,revision=ASR_REVISION)
     # The selected recognizer loads int8 graphs. Avoid downloading unused
     # training checkpoints and float32 copies on every new replica.
-    root=Path(snapshot_download(**options,allow_patterns=['*int8*.onnx','*tokens.txt']))
-    try:
-        for role in ('encoder','decoder','joiner'): _find(root,role)
-        _tokens(root)
-    except FileNotFoundError:
-        # Preserve support for other configured repositories with float graphs.
-        root=Path(snapshot_download(**options,allow_patterns=['*.onnx','*tokens.txt']))
-    return root
+    if ASR_REPO=='g-group-ai-lab/gipformer1.5-68M-rnnt' and ASR_REVISION=='dd9227dcd8705c13f33bdbe59728d546ab94480f':
+        options['allow_patterns']=['encoder.int8.onnx','decoder.int8.onnx','joiner.int8.onnx','tokens.txt']
+    # Other repositories/revisions retain the original full-snapshot behavior,
+    # including any external-data files their ONNX graphs may reference.
+    return Path(snapshot_download(**options))
 def _initialize(kind):
     global _KIND,_MODEL
     _KIND=kind
