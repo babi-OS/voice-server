@@ -61,12 +61,14 @@ def test_workers_warm_individually_and_keep_admission_until_native_jobs_finish(m
             await asyncio.to_thread(entered.wait, 3)
             # Both workers execute; other calls wait in the shared async queue.
             assert pool.available.empty()
+            assert pool.admitted == 4 and pool.running == 2
             tasks[0].cancel()
             with pytest.raises(asyncio.CancelledError):
                 await tasks[0]
             assert pool.available.empty()
             with pytest.raises(workers.WorkerBusy):
                 await pool.call("synthesize", 4)
+            assert pool.admitted == 4 and pool.running == 2 and pool.rejected == 1
             release.set()
             assert await asyncio.gather(*tasks[1:]) == [1, 2, 3]
             # The first native job finished too, despite its cancelled caller.
@@ -75,6 +77,7 @@ def test_workers_warm_individually_and_keep_admission_until_native_jobs_finish(m
                     break
                 await asyncio.sleep(.01)
             assert pool.available.qsize() == 2
+            assert pool.admitted == 0 and pool.running == 0
             assert await pool.call("synthesize", 5) == 5
         finally:
             release.set()

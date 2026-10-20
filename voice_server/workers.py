@@ -70,13 +70,17 @@ class WorkerPool:
         workers=integer_setting('VOICE_'+kind.upper()+'_WORKERS',1) if kind in ('asr','tts') else 1
         if workers>pending: raise ValueError(f'{kind} workers cannot exceed its admission limit {pending}')
         self.kind=kind; self.pending=asyncio.Semaphore(pending)
+        self.admitted=0; self.running=0; self.rejected=0
         self.executors=[self._new() for _ in range(workers)]
         self.available=asyncio.Queue()
         for slot in range(workers): self.available.put_nowait(slot)
     def _new(self): return concurrent.futures.ProcessPoolExecutor(max_workers=1,mp_context=multiprocessing.get_context('spawn'),initializer=_initialize,initargs=(self.kind,))
     async def call(self,command,payload=None,timeout=30):
         try: await asyncio.wait_for(self.pending.acquire(),.05)
-        except TimeoutError as e: raise WorkerBusy(f'{self.kind} queue is full') from e
+        except TimeoutError as e:
+            self.rejected+=1
+            raise WorkerBusy(f'{self.kind} queue is full') from e
+        self.admitted+=1
         slot=fut=None
         try:
             async with asyncio.timeout(timeout):
@@ -84,13 +88,16 @@ class WorkerPool:
                 # The next idle model gets the next request, even for varied lengths.
                 slot=await self.available.get()
                 fut=asyncio.get_running_loop().run_in_executor(self.executors[slot],_work,command,payload)
+                self.running+=1
                 def done(_):
+                    self.running-=1; self.admitted-=1
                     self.available.put_nowait(slot); self.pending.release()
                 # Cancellation/timeout must not free capacity while native inference is running.
                 fut.add_done_callback(done)
                 return await asyncio.shield(fut)
         finally:
             if fut is None:
+                self.admitted-=1
                 if slot is not None: self.available.put_nowait(slot)
                 self.pending.release()
     async def warm(self):

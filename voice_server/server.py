@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, json, logging, math, re, secrets, time
+import asyncio, json, logging, math, re, secrets, signal, time
 from collections import deque
 from pathlib import Path
 import numpy as np
@@ -27,7 +27,9 @@ def samples_pcm(samples,rate,out):
         d=math.gcd(rate,out); a=resample_poly(a,out//d,rate//d)
     return (np.clip(a,-1,1)*32767).astype('<i2').tobytes()
 class Service:
-    def __init__(self): self.vad=WorkerPool('vad',64); self.asr=WorkerPool('asr',8); self.tts=WorkerPool('tts',4)
+    def __init__(self):
+        self.vad=WorkerPool('vad',64); self.asr=WorkerPool('asr',8); self.tts=WorkerPool('tts',4)
+        self.connections=set(); self.draining=False
     async def warm(self): await asyncio.gather(self.vad.warm(),self.asr.warm(),self.tts.warm())
     def close(self): self.vad.close(); self.asr.close(); self.tts.close()
 class Connection:
@@ -50,6 +52,8 @@ class Connection:
             self.audio=validate_hello(d); self.decoder=opuslib_next.Decoder(self.audio.input.sample_rate,1) if self.audio.input.codec=='opus' else None; self.encoder=make_encoder(self.audio.output) if self.audio.output.codec=='opus' else None
             await self.send('ready',version=2,audio=self.audio.wire(),capabilities={'stt':True,'tts':True,'model':False}); return
         if k=='request.cancel': await self.cancel(ident(d.get('request_id'),'request_id')); return
+        if k in ('stt.start','tts.start') and getattr(self.svc,'draining',False):
+            raise ProtocolError('replica draining; reconnect','draining')
         if k=='stt.start': await self.start_stt(d); return
         if k=='stt.finish':
             r=ident(d.get('request_id'),'request_id')
@@ -153,7 +157,10 @@ class Connection:
         try: await self.svc.vad.call('release',self.key,timeout=2)
         except Exception: pass
 async def handle_voice(req):
+    if req.app['service'].draining:
+        raise web.HTTPServiceUnavailable(text='voice replica is draining',headers={'Retry-After':'1'})
     ws=web.WebSocketResponse(max_msg_size=8192+8); await ws.prepare(req); c=Connection(ws,req.app['service'])
+    c.svc.connections.add(c)
     try:
         async for msg in ws:
             try:
@@ -162,12 +169,53 @@ async def handle_voice(req):
                 elif msg.type==web.WSMsgType.ERROR: break
             except (ProtocolError,WorkerBusy) as e: await c.send('error',code=getattr(e,'code','busy'),message=str(e))
             except Exception: LOG.exception('voice request failed'); await c.send('error',code='internal_error',message='voice operation failed')
-    finally: await c.close()
+    finally:
+        try: await c.close()
+        finally: c.svc.connections.discard(c)
     return ws
 async def health(req): return web.json_response({'ok':True,'service':'voice-server','protocol':2,'stateless':True})
+async def ready(req):
+    return web.json_response({'ok':not req.app['service'].draining},status=503 if req.app['service'].draining else 200)
+async def metrics(req):
+    svc=req.app['service']
+    lines=['# TYPE voice_connections gauge',f'voice_connections {sum(c.audio is not None for c in svc.connections)}',
+           '# TYPE voice_draining gauge',f'voice_draining {int(svc.draining)}',
+           '# TYPE voice_worker_admitted gauge','# TYPE voice_worker_running gauge',
+           '# TYPE voice_worker_queued gauge','# TYPE voice_worker_rejected_total counter']
+    for kind in ('vad','asr','tts'):
+        pool=getattr(svc,kind)
+        for metric,value in [('admitted',pool.admitted),('running',pool.running),
+                             ('queued',pool.admitted-pool.running),('rejected_total',pool.rejected)]:
+            lines.append(f'voice_worker_{metric}{{kind="{kind}"}} {value}')
+    return web.Response(text='\n'.join(lines)+'\n',content_type='text/plain')
+
+async def drain(service,timeout=120):
+    """Stop admitting connections, finish active speech operations, close idle sockets."""
+    service.draining=True
+    deadline=asyncio.get_running_loop().time()+timeout
+    while service.connections:
+        idle=[c for c in tuple(service.connections) if not any((c.stt,c.stt_task,c.tts,c.tts_task))]
+        if idle:
+            await asyncio.gather(*(c.ws.close(code=1012,message=b'replica draining; reconnect') for c in idle))
+        if not service.connections or asyncio.get_running_loop().time()>=deadline:
+            break
+        await asyncio.sleep(.05)
+    await asyncio.gather(*(c.ws.close(code=1012,message=b'replica draining; reconnect') for c in tuple(service.connections)))
+
 def create_app(service):
-    app=web.Application(); app['service']=service; root=Path(__file__).parent/'static'; app.router.add_get('/healthz',health); app.router.add_get('/v2/voice',handle_voice); app.router.add_get('/',lambda r:web.FileResponse(root/'index.html')); app.router.add_get('/mic-worklet.js',lambda r:web.FileResponse(root/'mic-worklet.js')); return app
+    if not hasattr(service,'connections'): service.connections=set()
+    if not hasattr(service,'draining'): service.draining=False
+    app=web.Application(); app['service']=service; root=Path(__file__).parent/'static'; app.router.add_get('/healthz',health); app.router.add_get('/readyz',ready); app.router.add_get('/metrics',metrics); app.router.add_get('/v2/voice',handle_voice); app.router.add_get('/',lambda r:web.FileResponse(root/'index.html')); app.router.add_get('/mic-worklet.js',lambda r:web.FileResponse(root/'mic-worklet.js')); return app
 async def run(host='0.0.0.0',port=8765):
-    svc=Service(); await svc.warm(); runner=web.AppRunner(create_app(svc)); await runner.setup(); site=web.TCPSite(runner,host,port); await site.start(); LOG.info('listening on %s:%s',host,port)
-    try: await asyncio.Event().wait()
-    finally: svc.close(); await runner.cleanup()
+    svc=Service(); stop=asyncio.Event(); loop=asyncio.get_running_loop()
+    for sig in (signal.SIGINT,signal.SIGTERM): loop.add_signal_handler(sig,stop.set)
+    runner=None
+    try:
+        await svc.warm(); runner=web.AppRunner(create_app(svc),handle_signals=False,shutdown_timeout=5)
+        await runner.setup(); site=web.TCPSite(runner,host,port); await site.start(); LOG.info('listening on %s:%s',host,port)
+        await stop.wait()
+        await drain(svc)
+    finally:
+        if runner: await runner.cleanup()
+        svc.close()
+        for sig in (signal.SIGINT,signal.SIGTERM): loop.remove_signal_handler(sig)
