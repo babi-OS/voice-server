@@ -200,6 +200,64 @@ class MatchaOnnx(TtsAdapter):
             notes=[f"steps={self.steps}"],
         )
 
+    def synthesize_batch(self, texts: list[str]) -> list[SynthOutput]:
+        """Batch the expensive decoder/vocoder without padding across lengths.
+
+        Encode independently so duration prediction and native padded decoder
+        lengths match singleton serving. Group decoder items by compatible mel
+        length, then vocoder items by exact mel length. Heterogeneous groups may
+        execute singly. Each item retains its singleton seed and output order.
+        """
+        import numpy as np
+        from collections import defaultdict
+        from voice_server.vocos_istft import istft_same
+
+        if self.encoder is None:
+            self.load()
+        if self.spec.mode != 'selected':
+            raise ValueError('batch synthesis requires the selected CPU model')
+        if not 1 <= len(texts) <= 4:
+            raise ValueError('TTS batches must contain 1..4 items')
+        if len(texts) > 1 and any(isinstance(s.get_inputs()[0].shape[0], int)
+                                  for s in (self.decoder, self.vocoder)):
+            raise ValueError('TTS batching requires the prepared batch model bundle')
+        clock = Clock()
+        encodings = []
+        decoder_groups = defaultdict(list)
+        vocoder_groups = defaultdict(list)
+        outputs = [None] * len(texts)
+        self.last_batch_sizes = {'decoder': [], 'vocoder': []}
+        for index, text in enumerate(texts):
+            ids = np.asarray([self._ids(text)], dtype=np.int64)
+            feed = _feed(self.encoder, {'ids': ids, 'lengths': np.asarray([ids.shape[1]], np.int64),
+                                       'length_scale': np.asarray(1., np.float32)})
+            encoded = dict(zip(_out_names(self.encoder), self.encoder.run(None, feed)))
+            encodings.append(encoded)
+            decoder_groups[encoded['mu_y'].shape[2]].append(index)
+        for indices in decoder_groups.values():
+            encoded = {key: np.concatenate([encodings[i][key] for i in indices], axis=0)
+                       for key in ('mu_y', 'y_mask')}
+            mel = _euler(self.decoder, encoded, self.steps, np,
+                         temperature=self.temperature, sway=False, independent_seeds=True)
+            mel = mel * np.float32(self.mel_std) + np.float32(self.mel_mean)
+            self.last_batch_sizes['decoder'].append(len(indices))
+            for row, index in enumerate(indices):
+                length = int(encodings[index]['y_mask'].sum())
+                vocoder_groups[length].append((index, mel[row:row+1, :, :length]))
+        for items in vocoder_groups.values():
+            mel = np.concatenate([item[1] for item in items], axis=0)
+            real, imag = self.vocoder.run(None, _feed(self.vocoder, {'mel': mel}))
+            waves = istft_same(real, imag)
+            self.last_batch_sizes['vocoder'].append(len(items))
+            for (index, _), samples in zip(items, waves):
+                if not np.isfinite(samples).all() or samples.size < 2205:
+                    raise RuntimeError('selected CPU batch model returned invalid audio')
+                outputs[index] = SynthOutput(
+                    chunks=[SynthChunk(samples.astype('float32').tolist(), self.sample_rate, clock.now())],
+                    sample_rate=self.sample_rate, streaming=False,
+                    notes=[f'steps={self.steps}', 'selected-vocos-onnx', 'length-grouped-batch'])
+        return outputs
+
 
 def _out_names(session) -> list[str]:
     return [o.name for o in session.get_outputs()]
@@ -232,7 +290,7 @@ def _feed(session, available: dict) -> dict:
 
 
 def _euler(decoder, enc_out, steps: int, np, *, temperature: float = 0.9,
-           sway: bool = True) -> object:
+           sway: bool = True, independent_seeds: bool = False) -> object:
     """A short Euler loop for a flow decoder. Names that are not mu/t/mask/x raise."""
     mu = None
     for key, value in enc_out.items():
@@ -244,7 +302,12 @@ def _euler(decoder, enc_out, steps: int, np, *, temperature: float = 0.9,
     mask = enc_out.get("y_mask")
     if mask is None:
         raise RuntimeError("Matcha encoder did not return y_mask")
-    x = np.random.default_rng(42).normal(0.0, temperature, size=np.asarray(mu).shape).astype("float32")
+    shape = np.asarray(mu).shape
+    if independent_seeds:
+        x = np.concatenate([np.random.default_rng(42).normal(0., temperature, size=(1, *shape[1:]))
+                            for _ in range(shape[0])], axis=0).astype('float32')
+    else:
+        x = np.random.default_rng(42).normal(0.0, temperature, size=shape).astype("float32")
     for i in range(steps):
         if sway:
             u = i / steps

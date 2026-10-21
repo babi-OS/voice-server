@@ -56,6 +56,9 @@ def _initialize(kind):
     elif kind=='tts':
         from voice_server.matcha_onnx import MatchaOnnx, ModelSpec
         _MODEL=MatchaOnnx(ModelSpec(MATCHA_REPO,MATCHA_REVISION,'selected')); _MODEL.load()
+        if integer_setting('VOICE_TTS_BATCH_SIZE',1,maximum=4)>1:
+            if any(isinstance(s.get_inputs()[0].shape[0],int) for s in (_MODEL.decoder,_MODEL.vocoder)):
+                raise ValueError('TTS batching requires the prepared batch model bundle')
         # Every model process must execute inference, not just load its graphs.
         warm_started=time.monotonic(); _work('synthesize','Xin chào.'); _WARM_SECONDS=time.monotonic()-warm_started
     else: raise ValueError(kind)
@@ -86,6 +89,27 @@ def _timed_work(command,payload):
     wall=time.monotonic(); cpu=time.process_time()
     result=_work(command,payload)
     return result,time.monotonic()-wall,time.process_time()-cpu
+
+def _timed_batch_work(command,payloads):
+    wall=time.monotonic(); cpu=time.process_time()
+    groups={}
+    if _KIND=='asr' and command=='decode':
+        import numpy as np
+        streams=[]
+        for payload in payloads:
+            stream=_MODEL.create_stream()
+            stream.accept_waveform(16000,np.frombuffer(payload,dtype='<i2').astype('float32')/32768)
+            streams.append(stream)
+        _MODEL.decode_streams(streams)
+        results=[stream.result.text.strip() for stream in streams]
+        groups={'asr':[len(streams)]}
+    elif _KIND=='tts' and command=='synthesize':
+        outputs=_MODEL.synthesize_batch(payloads)
+        results=[(out.sample_rate,out.samples) for out in outputs]
+        groups=_MODEL.last_batch_sizes
+    else:
+        raise ValueError('unsupported batch command')
+    return results,time.monotonic()-wall,time.process_time()-cpu,groups
 
 class WorkerPool:
     def __init__(self,kind,pending):

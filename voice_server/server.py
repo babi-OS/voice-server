@@ -9,6 +9,7 @@ from aiohttp import web
 from .protocol import *
 from .codec import encode_batch, MAX_ENCODE_BATCH, make_encoder, validate_input_packet
 from .workers import WorkerPool, WorkerBusy
+from .batching import make_worker_pool
 from .runtime import integer_setting
 LOG=logging.getLogger('voice_server')
 MAX_UTTERANCE_BYTES=30*INPUT_RATE*2; MAX_TTS_TEXT=1500; ID_RE=re.compile(r'^[A-Za-z0-9_-]{1,64}$')
@@ -36,14 +37,14 @@ class Service:
         from .telemetry import Telemetry
         self.telemetry=Telemetry()
         if self.role=='all':
-            self.vad=WorkerPool('vad',64); self.asr=WorkerPool('asr',8); self.tts=WorkerPool('tts',4)
+            self.vad=WorkerPool('vad',64); self.asr=make_worker_pool('asr',8); self.tts=make_worker_pool('tts',4)
         elif self.role=='gateway':
             from .gateway import VadThread,CodecExecutor
             self.vad=VadThread(); self.codec=CodecExecutor()
         else:
             kind='asr' if self.role=='stt' else 'tts'
             if int(os.getenv('VOICE_'+kind.upper()+'_WORKERS','1'))!=1: raise ValueError('split workers require one native process')
-            setattr(self,kind,WorkerPool(kind,integer_setting('VOICE_'+self.role.upper()+'_ADMISSION',2,maximum=256)))
+            setattr(self,kind,make_worker_pool(kind,integer_setting('VOICE_'+self.role.upper()+'_ADMISSION',2,maximum=256)))
         if self.role!='all' and not os.getenv('VOICE_RPC_TOKEN'): raise ValueError('VOICE_RPC_TOKEN required for split roles')
     async def warm(self):
         if self.role=='gateway':
@@ -97,7 +98,7 @@ class Connection:
         self.completed[r]={'status':status,'result':result}; await self.send('request.end',request_id=r,status=status,result=result)
     def clear_stt(self): self.stt=self.stt_stream=None; self.stt_seq=0; self.pending.clear(); self.preroll.clear(); self.utterance.clear(); self.speaking=False; self.voice=self.silence=0; self.end_silence_windows=math.ceil(DEFAULT_END_SILENCE_MS/VAD_WINDOW_MS)
     def clear_tts(self): self.tts=self.tts_stream=None; self.tts_q=None; self.tts_next=self.tts_len=0; self.tts_finished=False
-    async def control(self,text):
+    async def control(self,text,received_at=None):
         d=parse_control(text); k=d['type']
         if k!='hello': self.last_activity=time.monotonic()
         if self.audio is None:
@@ -112,9 +113,9 @@ class Connection:
             r=ident(d.get('request_id'),'request_id')
             if r==self.stt_processing or r in self.completed: return
             if r!=self.stt: raise ProtocolError('STT request is not active','not_active')
-            await self.finish_stt(); return
+            await self.finish_stt(received_at=received_at); return
         if k=='tts.start': await self.start_tts(d); return
-        if k=='tts.text': await self.tts_text(d); return
+        if k=='tts.text': await self.tts_text(d,received_at=received_at); return
         if k=='tts.finish':
             if d.get('request_id')!=self.tts or self.tts_finished: raise ProtocolError('TTS request is not active','not_active')
             self.tts_finished=True; self.tts_q.put_nowait(None); await self.send('tts.accepted',request_id=self.tts,chunks=self.tts_next); return
@@ -152,7 +153,7 @@ class Connection:
         self.utterance.extend(w); self.silence=0 if voiced else self.silence+1
         if len(self.utterance)>MAX_UTTERANCE_BYTES: r=self.stt; self.clear_stt(); await self.end(r,'failed',{'code':'utterance_too_long'}); return
         if self.end_silence_windows and self.silence>=self.end_silence_windows: await self.finish_stt()
-    async def finish_stt(self):
+    async def finish_stt(self,received_at=None):
         r=self.stt
         if not r:return
         pcm=bytes(self.utterance+self.pending) if self.speaking else b''; self.clear_stt()
@@ -161,31 +162,38 @@ class Connection:
         if len(pcm)<INPUT_RATE//4*2: await self.send('stt.final',request_id=r,text=''); await self.end(r,'completed',{'transcript':''}); return
         async def run():
             try:
-                text=await self.svc.asr.call('decode',pcm,timeout=90); await self.send('stt.final',request_id=r,text=text); await self.end(r,'completed',{'transcript':text})
+                text=await self.stage_call(self.svc.asr,'decode',pcm,timeout=90,received_at=received_at); await self.send('stt.final',request_id=r,text=text); await self.end(r,'completed',{'transcript':text})
             except asyncio.CancelledError: raise
             except WorkerBusy as e: await self.end(r,'failed',{'code':'overloaded','stage':'stt','retry_after_ms':1000})
             except Exception as e: LOG.exception('STT failed'); await self.end(r,'failed',{'code':'stt_failed','message':str(e)})
             finally: self.stt_task=None; self.stt_processing=None
         self.stt_processing=r; self.stt_task=asyncio.create_task(run())
+    async def stage_call(self,pool,command,payload,*,timeout,received_at=None):
+        if getattr(self.svc,'role','all')!='gateway':
+            return await pool.call(command,payload,timeout=timeout)
+        # Reserve 150 ms for RPC/overload reporting within the two-second budget.
+        budget=1.85-(time.monotonic()-received_at) if received_at is not None else 1.85
+        if budget<=0: raise WorkerBusy('submitted stage deadline exceeded',pool.kind)
+        return await pool.call(command,payload,timeout=timeout,queue_budget=budget)
     async def start_tts(self,d):
         if self.tts or self.tts_task or self.stt or self.stt_task: raise ProtocolError('another operation is active','busy')
         r=ident(d.get('request_id'),'request_id'); t=ident(d.get('turn_id'),'turn_id')
         if r in self.completed: await self.send('request.end',request_id=r,**self.completed[r]); return
         self.tts=r; self.tts_stream=secrets.randbelow(0xffffffff)+1; self.tts_q=asyncio.Queue(maxsize=3); self.tts_task=asyncio.create_task(self.run_tts(r,t,self.tts_stream,self.tts_q)); await self.send('tts.ready',request_id=r,turn_id=t,stream_id=self.tts_stream)
-    async def tts_text(self,d):
+    async def tts_text(self,d,received_at=None):
         if d.get('request_id')!=self.tts or self.tts_finished: raise ProtocolError('TTS request is not accepting text','not_active')
         i=d.get('index'); text=d.get('text')
         if type(i)is not int or i!=self.tts_next: raise ProtocolError('TTS chunk index must be next','sequence_mismatch')
         if not isinstance(text,str) or not text.strip() or len(text)>500 or self.tts_len+len(text)>MAX_TTS_TEXT: raise ProtocolError('invalid TTS text','too_large')
         if self.tts_q.full(): raise ProtocolError('TTS queue full','busy')
-        self.tts_q.put_nowait((i,text.strip())); self.tts_next+=1; self.tts_len+=len(text); await self.send('tts.accepted',request_id=self.tts,index=i)
+        self.tts_q.put_nowait((i,text.strip(),received_at)); self.tts_next+=1; self.tts_len+=len(text); await self.send('tts.accepted',request_id=self.tts,index=i)
     async def run_tts(self,r,t,s,q):
         seq=count=0
         try:
             while True:
                 item=await asyncio.wait_for(q.get(),45)
                 if item is None: break
-                i,text=item; rate,samples=await self.svc.tts.call('synthesize',text,timeout=120); out=self.audio.output; pcm=await self.convert(pcm_resample,samples,rate,out.sample_rate) if isinstance(samples,bytes) else await self.convert(samples_pcm,samples,rate,out.sample_rate); await self.send('tts.audio_start',request_id=r,turn_id=t,stream_id=s,index=i,sample_rate=out.sample_rate)
+                i,text,received_at=item; rate,samples=await self.stage_call(self.svc.tts,'synthesize',text,timeout=120,received_at=received_at); out=self.audio.output; pcm=await self.convert(pcm_resample,samples,rate,out.sample_rate) if isinstance(samples,bytes) else await self.convert(samples_pcm,samples,rate,out.sample_rate); await self.send('tts.audio_start',request_id=r,turn_id=t,stream_id=s,index=i,sample_rate=out.sample_rate)
                 batch_packets=MAX_ENCODE_BATCH if out.codec=='opus' and getattr(self.svc,'codec',None) else 1
                 for off in range(0,len(pcm),out.packet_bytes*batch_packets):
                     if out.codec=='opus':
@@ -223,24 +231,34 @@ class Connection:
 async def handle_voice(req):
     if req.app['service'].draining:
         raise web.HTTPServiceUnavailable(text='voice replica is draining',headers={'Retry-After':'1'})
-    if getattr(req.app['service'],'role','all')=='gateway' and len(req.app['service'].connections)>=256: raise web.HTTPTooManyRequests(text='connection capacity full')
+    if getattr(req.app['service'],'role','all')=='gateway' and len(req.app['service'].connections)>=integer_setting('VOICE_GATEWAY_MAX_CONNECTIONS',256,maximum=1024): raise web.HTTPTooManyRequests(text='connection capacity full')
     ws=web.WebSocketResponse(max_msg_size=8192+8)
     ws.headers['X-Voice-Replica']=os.getenv('HOSTNAME','voice-server')
     await ws.prepare(req); c=Connection(ws,req.app['service'])
     c.svc.connections.add(c)
+    ingress=None
+    if getattr(c.svc,'role','all')=='gateway':
+        from .ingress import Ingress
+        ingress=Ingress(c,req.app['ingress'])
     try:
         async for msg in ws:
             try:
-                if msg.type==web.WSMsgType.TEXT: await c.control(msg.data)
-                elif msg.type==web.WSMsgType.BINARY: await c.packet(msg.data)
+                if msg.type in (web.WSMsgType.TEXT,web.WSMsgType.BINARY):
+                    if ingress: ingress.offer(msg.type,msg.data)
+                    elif msg.type==web.WSMsgType.TEXT: await c.control(msg.data)
+                    else: await c.packet(msg.data)
                 elif msg.type==web.WSMsgType.ERROR: break
             except (ProtocolError,WorkerBusy) as e: await c.send('error',code=getattr(e,'code','busy'),message=str(e))
             except Exception: LOG.exception('voice request failed'); await c.send('error',code='internal_error',message='voice operation failed')
     finally:
-        try: await c.close()
+        try:
+            if ingress: await ingress.close()
+            await c.close()
         finally: c.svc.connections.discard(c)
     return ws
 def healthy(svc):
+    ingress=getattr(svc,'ingress',None)
+    if ingress and ingress.task and ingress.task.done() and not svc.draining: return False
     return all(getattr(getattr(svc,k,None),'healthy',True) and not any(getattr(e,'_broken',False) for e in getattr(getattr(svc,k,None),'executors',[])) for k in ('vad','asr','tts')) and not (getattr(getattr(svc,'vad',None),'task',None) and svc.vad.task.done() and not svc.draining)
 async def health(req):
     ok=bool(healthy(req.app['service']))
@@ -264,8 +282,12 @@ async def metrics(req):
     for kind in ('vad','asr','tts'):
         pool=getattr(svc,kind)
         if pool is None: continue
-        if hasattr(pool,'telemetry'): lines.extend(pool.telemetry.render())
         stage='stt' if kind=='asr' else kind
+        if hasattr(pool,'telemetry'): lines.extend(pool.telemetry.render())
+        for size,count in getattr(pool,'batch_sizes',{}).items():
+            lines.append(f'voice_native_batches_total{{stage="{stage}",size="{size}"}} {count}')
+        for (model,size),count in getattr(pool,'model_batch_sizes',{}).items():
+            lines.append(f'voice_model_batches_total{{stage="{stage}",model="{model}",size="{size}"}} {count}')
         lines.append(f'voice_stage_admitted{{stage="{stage}"}} {pool.admitted}')
         for reason,count in getattr(pool,'rejection_reasons',{}).items():
             lines.append(f'voice_admission_rejected_total{{stage="{stage}",reason="{reason}"}} {count}')
@@ -277,6 +299,12 @@ async def metrics(req):
     lines.append(f'voice_active_microphones {sum(bool(c.stt) for c in svc.connections)}')
     if hasattr(svc,'telemetry'): lines.extend(svc.telemetry.render())
     if getattr(svc,'codec',None): lines.extend(svc.codec.telemetry.render())
+    ingress=req.app.get('ingress')
+    if ingress:
+        lines.extend(ingress.telemetry.render())
+        lines.append(f'voice_ingress_pending {ingress.pending}')
+        for reason,n in ingress.rejections.items():
+            lines.append(f'voice_ingress_rejected_total{{reason="{reason}"}} {n}')
     return web.Response(text='\n'.join(lines)+'\n',content_type='text/plain')
 
 async def drain(service,timeout=120):
@@ -296,6 +324,14 @@ def create_app(service):
     if not hasattr(service,'connections'): service.connections=set()
     if not hasattr(service,'draining'): service.draining=False
     app=web.Application(client_max_size=MAX_UTTERANCE_BYTES); app['service']=service
+    if getattr(service,'role','all')=='gateway':
+        from .ingress import IngressLimiter
+        app['ingress']=service.ingress=IngressLimiter()
+        async def ingress_lifetime(app):
+            await app['ingress'].start()
+            yield
+            await app['ingress'].close()
+        app.cleanup_ctx.append(ingress_lifetime)
     app.router.add_get('/healthz',health); app.router.add_get('/readyz',ready); app.router.add_get('/metrics',metrics)
     if getattr(service,'role','all') in ('all','gateway'):
         root=Path(__file__).parent/'static'

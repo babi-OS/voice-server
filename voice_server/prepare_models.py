@@ -26,7 +26,8 @@ def prepare(*, local):
         asr=_asr_snapshot(local_files_only=local)
         files += [_tokens(asr), *(_find(asr,kind) for kind in ('encoder','decoder','joiner'))]
     if role in ('all','tts'):
-        root=Path(snapshot_download(repo_id=MATCHA_REPO,revision=MATCHA_REVISION,
+        bundle=os.getenv('MATCHA_CPU_DIR')
+        root=Path(bundle) if bundle else Path(snapshot_download(repo_id=MATCHA_REPO,revision=MATCHA_REVISION,
             allow_patterns=['weights/cpu-onnx/*','scripts/matcha_hybrid_frontend.py'],local_files_only=local))/'weights/cpu-onnx'
         metadata=json.loads((root/'model.json').read_text())
         files += [root/'model.json',root/'phoneme_vocab.json']

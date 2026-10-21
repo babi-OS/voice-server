@@ -27,7 +27,17 @@ def snapshot():
     except (OSError, StopIteration):
         pass
     result['models'] = {key: os.getenv(key) for key in
-        ('ASR_REVISION','MATCHA_REVISION','VAD_REVISION','VOICE_ASR_THREADS','VOICE_TTS_THREADS')}
+        ('ASR_REVISION','MATCHA_REVISION','VAD_REVISION','VOICE_ASR_THREADS','VOICE_TTS_THREADS',
+         'VOICE_ASR_BATCH_SIZE','VOICE_TTS_BATCH_SIZE','VOICE_ASR_BATCH_WAIT_MS','VOICE_TTS_BATCH_WAIT_MS')}
+    if directory := os.getenv('MATCHA_CPU_DIR'):
+        try:
+            raw = (Path(directory) / 'model.json').read_bytes()
+            metadata = json.loads(raw)
+            result['local_tts_model'] = {'manifest_sha256': hashlib.sha256(raw).hexdigest(),
+                                         'graphs': metadata.get('files'),
+                                         'batch_variant': metadata.get('batch_variant')}
+        except (OSError, ValueError):
+            result['local_tts_model'] = {'error': 'manifest unavailable'}
     return result
 
 

@@ -12,6 +12,7 @@ import aiohttp
 from . import workers
 from .workers import WorkerBusy
 from .telemetry import Telemetry
+from .runtime import integer_setting
 
 class CodecExecutor:
     def __init__(self):
@@ -40,7 +41,7 @@ class VadThread:
     """One native VAD owner; coalescing changes scheduling, never model math."""
     def __init__(self):
         self.executor=concurrent.futures.ThreadPoolExecutor(max_workers=1,initializer=workers._initialize,initargs=('vad',),thread_name_prefix='voice-vad')
-        self.queue=asyncio.Queue(maxsize=64); self.task=None
+        self.queue=asyncio.Queue(maxsize=integer_setting('VOICE_VAD_QUEUE',256,maximum=1024)); self.task=None
         self.admitted=self.running=self.rejected=self.offered=0
         self.telemetry=Telemetry()
     async def warm(self):
@@ -71,6 +72,14 @@ class VadThread:
             batch=[await self.queue.get()]
             await asyncio.sleep(.001)
             while len(batch)<16 and not self.queue.empty(): batch.append(self.queue.get_nowait())
+            # A dropped stream's queued feed no longer needs model execution.
+            # Reset/release commands still run, even if their caller timed out.
+            live=[]
+            for item in batch:
+                if item[0]=='feed' and item[2].cancelled(): self.admitted-=1
+                else: live.append(item)
+            batch=live
+            if not batch: continue
             self.running=len(batch)
             for *_,entered in batch: self.telemetry.observe('queue_wait',time.monotonic()-entered,'vad')
             started=time.monotonic()
@@ -183,20 +192,21 @@ class RemotePool:
     def __init__(self,stage,discovery):
         self.kind=self.stage=stage; self.discovery=discovery
         self.admitted=self.running=self.rejected=self.offered=0; self.telemetry=Telemetry()
-    async def call(self,command,payload=None,timeout=120):
-        started=time.monotonic(); excluded=set(); self.offered+=1; self.admitted+=1; self.running+=1
+    async def call(self,command,payload=None,timeout=120,queue_budget=2.):
+        started=time.monotonic(); queue_budget=min(2.,max(0.,queue_budget)); excluded=set(); self.offered+=1; self.admitted+=1; self.running+=1
         try:
             for attempt in range(2):
                 url=self.discovery.choose(self.stage,excluded); excluded.add(url)
-                remaining=max(0.,2-(time.monotonic()-started))
+                remaining=queue_budget-(time.monotonic()-started)
+                if remaining<=0: raise WorkerBusy('submitted stage deadline exceeded',self.stage)
                 headers={'Authorization':'Bearer '+self.discovery.token,'X-Queue-Budget-Ms':str(int(remaining*1000))}
                 kwargs={'data':payload,'headers':headers} if self.stage=='stt' else {'json':{'text':payload,'sample_rate':24000},'headers':headers}
                 self.discovery.inflight[url]=self.discovery.inflight.get(url,0)+1
                 try:
-                    async with self.discovery.session.post(url+'/internal/v1/'+self.stage,**kwargs,timeout=aiohttp.ClientTimeout(total=timeout,sock_connect=.2)) as response:
+                    async with self.discovery.session.post(url+'/internal/v1/'+self.stage,**kwargs,timeout=aiohttp.ClientTimeout(total=timeout,sock_connect=min(.1,remaining))) as response:
                         if response.status in (429,503):
                             report=await response.json()
-                            if report.get('not_started') and attempt==0 and time.monotonic()-started<2: continue
+                            if report.get('not_started') and attempt==0 and time.monotonic()-started<queue_budget: continue
                             raise WorkerBusy(report.get('code','worker unavailable'),self.stage)
                         response.raise_for_status()
                         if self.stage=='stt': result=(await response.json())['text']
@@ -205,7 +215,7 @@ class RemotePool:
                         return result
                 except (aiohttp.ClientConnectorError,aiohttp.ConnectionTimeoutError):
                     self.discovery.failed[url]=time.monotonic()
-                    if attempt or time.monotonic()-started>=2: raise WorkerBusy('worker unavailable',self.stage)
+                    if attempt or time.monotonic()-started>=queue_budget: raise WorkerBusy('worker unavailable',self.stage)
                 except (aiohttp.ClientError,TimeoutError):
                     # Cool down ambiguous failures, but never replay their operation.
                     self.discovery.failed[url]=time.monotonic(); raise

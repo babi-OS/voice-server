@@ -16,7 +16,7 @@ def busy(stage,code='overloaded',status=429):
 
 async def capacity(req):
     authenticated(req); svc=req.app['service']; pool=svc.asr if svc.role=='stt' else svc.tts
-    return web.json_response({'stage':svc.role,'admitted':pool.admitted,'running':pool.running,'queued':pool.admitted-pool.running,'slots':1,'estimated_service_s':pool.estimate})
+    return web.json_response({'stage':svc.role,'admitted':pool.admitted,'running':pool.running,'queued':pool.admitted-pool.running,'slots':getattr(pool,'batch_size',1),'estimated_service_s':pool.estimate})
 
 async def infer(req):
     authenticated(req); svc=req.app['service']; stage=svc.role
