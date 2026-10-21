@@ -38,6 +38,7 @@ class Stack:
         self.workers = []
         self.gateway = None
         self.stopping = False
+        self.health_failures = {}
 
     def start(self, role, port, host='127.0.0.1', **extra):
         return subprocess.Popen([sys.executable, '-m', 'voice_server', '--host',
@@ -50,6 +51,20 @@ class Stack:
 
     def request_stop(self, *_):
         self.stopping = True
+
+    def check_workers(self):
+        # The HTTP owner may survive a failed native ProcessPool child. Monitor
+        # its health as well as Popen so the gateway cannot hide that failure.
+        for _, port in self.layout:
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2) as response:
+                    if response.status != 200:
+                        raise OSError('worker unhealthy')
+                self.health_failures[port] = 0
+            except OSError:
+                self.health_failures[port] = self.health_failures.get(port, 0) + 1
+                if self.health_failures[port] >= 3:
+                    raise RuntimeError(f'voice worker on port {port} failed health checks')
 
     @staticmethod
     def terminate(processes, timeout):
@@ -95,9 +110,13 @@ class Stack:
                 f'http://127.0.0.1:{p}' for s, p in self.layout if s == stage)
                 for stage in ('stt', 'tts')}
             self.gateway = self.start('gateway', 8765, '0.0.0.0', **urls)
+            next_health = time.monotonic() + 5
             while not self.stopping:
                 if not self.running():
                     raise RuntimeError('a voice role exited; restarting the whole stack')
+                if time.monotonic() >= next_health:
+                    self.check_workers()
+                    next_health = time.monotonic() + 5
                 time.sleep(.2)
         finally:
             self.stop()

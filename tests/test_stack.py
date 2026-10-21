@@ -45,6 +45,15 @@ def test_dead_worker_fails_whole_stack():
     assert not stack.running()
 
 
+def test_native_worker_health_failure_is_not_hidden_by_living_http_owner():
+    stack = Stack({'VOICE_STACK_STT_WORKERS':'1','VOICE_STACK_TTS_WORKERS':'1'})
+    with patch('voice_server.stack.urllib.request.urlopen',side_effect=OSError('native child failed')):
+        stack.check_workers()
+        stack.check_workers()
+        with pytest.raises(RuntimeError,match='failed health checks'):
+            stack.check_workers()
+
+
 def test_terminate_escalates_and_reaps_child():
     import subprocess
     child = Mock(); child.poll.return_value = None
