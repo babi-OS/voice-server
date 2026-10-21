@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Explicit-context local lifecycle. No production access or default kubeconfig writes."""
+import argparse,json,os,secrets,subprocess,sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+STATE=ROOT/'.local'; KUBE=STATE/'kubeconfig'; CLUSTER='voice-local'; NS='voice-split-bench'
+IMAGE='voice-server:local'
+def run(args,**kw): return subprocess.run(args,check=True,**kw)
+def output(args): return subprocess.check_output(args,text=True).strip()
+def kubectl(*args,**kw): return run(['kubectl','--kubeconfig',str(KUBE),'--context','k3d-'+CLUSTER,*args],**kw)
+def main():
+    parser=argparse.ArgumentParser(); parser.add_argument('action',choices=['create','build','import','deploy','monitoring','test','report','destroy']); args=parser.parse_args()
+    STATE.mkdir(exist_ok=True)
+    if args.action=='create':
+        available=int(next(l.split()[1] for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:')))*1024
+        if os.cpu_count()<24: sys.exit('This local profile requires at least 24 logical CPUs for the recorded CPU placement')
+        if available<26*1024**3: sys.exit('Need at least 26 GiB available RAM; no cluster created')
+        if any(c['name']==CLUSTER for c in json.loads(output(['k3d','cluster','list','-o','json']))): sys.exit('voice-local already exists; inspect or explicitly destroy it first')
+        seed=output(['docker','volume','inspect','voice-server_voice-models','--format','{{.Mountpoint}}'])
+        run(['k3d','cluster','create','--config',str(ROOT/'local/k3d.yaml'),'--servers-memory','2g','--agents-memory','10g','--volume',seed+':/model-seed:ro@agent:*'])
+        KUBE.write_text(output(['k3d','kubeconfig','get',CLUSTER])+'\n'); KUBE.chmod(0o600)
+        for name,cpu,cpuset in [('server-0','1','18'),('agent-0','6','6-11'),('agent-1','6','12-17')]: run(['docker','update','--cpus',cpu,'--cpuset-cpus',cpuset,'k3d-'+CLUSTER+'-'+name])
+    elif args.action=='build': run(['docker','build','-f',str(ROOT/'local/Dockerfile'),'-t',IMAGE,str(ROOT)])
+    elif args.action=='import': run(['k3d','image','import',IMAGE,'--cluster',CLUSTER])
+    elif args.action=='deploy':
+        rendered=output([sys.executable,str(ROOT/'local/render.py')]); kubectl('apply','-f','-',input=rendered,text=True)
+        for role in ('stt','tts','gateway'): kubectl('-n',NS,'rollout','status','deployment/voice-'+role,'--timeout=600s')
+    elif args.action=='monitoring': run([sys.executable,str(ROOT/'local/monitoring.py')])
+    elif args.action=='test': run([str(ROOT/'.venv/bin/python'),'-m','pytest','-q'],cwd=ROOT)
+    elif args.action=='report':
+        for resource in ('nodes','pods','hpa'): kubectl('get',resource,'-A','-o','wide')
+        kubectl('get','--raw','/apis/custom.metrics.k8s.io/v1beta1')
+    elif args.action=='destroy':
+        run(['k3d','cluster','delete',CLUSTER])
+        if KUBE.exists(): KUBE.unlink()
+if __name__=='__main__': main()

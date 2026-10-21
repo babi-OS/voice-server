@@ -150,3 +150,29 @@ period of at least 150 seconds. Model processes remain available until draining
 finishes. Existing WebSockets stay on their original replica when scaling up;
 new replicas receive new connections. Benchmark that routing behavior separately
 from raw model throughput when choosing autoscaling thresholds.
+
+## Separate gateway and native workers
+
+`VOICE_ROLE=all` (default) preserves the monolithic service. The opt-in `gateway`,
+`stt`, and `tts` roles expose separate serving paths. Split roles require a
+`VOICE_RPC_TOKEN`; worker Pods load only their own model and expose authenticated
+binary-PCM inference APIs. Gateways discover Ready workers through namespace
+EndpointSlices, or use comma-separated `VOICE_STT_URLS`/`VOICE_TTS_URLS` for local
+Docker comparisons. Each submitted inference stage has a bounded queue wait of
+at most two seconds, with explicit overload responses and no automatic replay of
+uncertain accepted requests.
+
+See [the local k3d workflow](local/README.md) for reproducible correctness,
+concurrency, matched-budget and autoscaling tests. Production scaling is disabled;
+`deploy/render.py` prepares review-only digest-pinned production candidate objects
+using an existing encrypted-secret workflow. It does not apply them or create an
+HPA/public route. Production rollout still requires capacity and reserve checks.
+
+The [larger-queue and STT CPU study](docs/benchmarks/2026-10-21-queue-capacity/README.md)
+records matched 4 CPU/6 GiB capacity sweeps beyond 32 users, bounded admission
+settings and native CPU costs after STT returns. Its local test commands and
+workload-specific limits are documented alongside the results.
+
+The [final optimization pass](docs/benchmarks/2026-10-21-final-optimization/README.md)
+adds selection across all Ready workers and bounded codec jobs, compares smaller
+worker layouts, and separates short-run buffering from sustained capacity.

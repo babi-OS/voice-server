@@ -58,3 +58,14 @@ def encode_packet(pcm: bytes, audio: AudioDirection, encoder: opuslib_next.Encod
     packet = encoder.encode(pcm, audio.packet_bytes // 2)
     validate_input_packet(packet, audio)
     return packet
+
+
+MAX_ENCODE_BATCH = 8
+
+
+def encode_batch(pcm: bytes, audio: AudioDirection, encoder: opuslib_next.Encoder) -> list[bytes]:
+    """Bound one codec job; each returned item remains one negotiated wire packet."""
+    if len(pcm) > MAX_ENCODE_BATCH * audio.packet_bytes:
+        raise ValueError("codec batch exceeds eight packets")
+    return [encode_packet(pcm[off:off + audio.packet_bytes].ljust(audio.packet_bytes, b'\0'), audio, encoder)
+            for off in range(0, len(pcm), audio.packet_bytes)]

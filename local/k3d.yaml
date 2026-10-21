@@ -1,0 +1,27 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: voice-local
+servers: 1
+agents: 2
+image: rancher/k3s:v1.33.6-k3s1
+kubeAPI:
+  hostIP: 127.0.0.1
+ports:
+  - port: 127.0.0.1:18765:30080
+    nodeFilters: [agent:0, agent:1]
+options:
+  k3d:
+    wait: true
+    timeout: 180s
+  kubeconfig:
+    updateDefaultKubeconfig: false
+    switchCurrentContext: false
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: [server:0]
+      - arg: --disable=servicelb
+        nodeFilters: [server:0]
+      - arg: --node-taint=voice-control=true:NoSchedule
+        nodeFilters: [server:0]
