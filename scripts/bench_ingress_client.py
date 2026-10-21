@@ -52,7 +52,12 @@ class Probe(OriginalProbe):
             if duplex.error:
                 row['overload_detected_during_streaming']=duplex.submitted_at is None
                 row['overload_event']=duplex.error
-                if duplex.submitted_at is not None:
+                if duplex.submitted_at is None:
+                    # The base probe may have just attempted stt.finish after an
+                    # error had already arrived; that is not a response latency.
+                    row.pop('overload_response_s',None)
+                    row.pop('overload_stage',None)
+                else:
                     row['overload_response_s']=max(0.,duplex.error_at-duplex.submitted_at)
                     row['overload_stage']=duplex.submitted_stage
             return row
